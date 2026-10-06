@@ -1,2 +1,1 @@
-# tree-led-scanner
-
+# Christmas tree point cloud
