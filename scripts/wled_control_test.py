@@ -8,11 +8,11 @@ WLED_IP = "192.168.178.85"
 # -----------------------------
 # LED control functions
 # -----------------------------
-def send_color(color: list[int], turn_off=False):
+def send_color(color: list[int], turn_off=False, brightness=255):
     data = {
         "seg": [{"i": [color]}],
         "on": True,
-        "bri": 255,
+        "bri": brightness,
     }
     try:
         requests.post(f"http://{WLED_IP}/json/state", json=data, timeout=0.5)
@@ -31,8 +31,8 @@ def turn_off():
     send_color([0, 0, 0], turn_off=True)
 
 
-def send_rgb(r: int, g: int, b: int, turn_off=False):
-    send_color([r, g, b], turn_off)
+def send_rgb(r: int, g: int, b: int, turn_off=False, brightness=10):
+    send_color([r, g, b], turn_off, brightness)
 
 
 time_delay = 0.5
@@ -57,4 +57,4 @@ send_rgb(255, 0, 255)
 time.sleep(time_delay)
 send_rgb(0, 255, 0)
 time.sleep(time_delay)
-turn_off()
+# turn_off()

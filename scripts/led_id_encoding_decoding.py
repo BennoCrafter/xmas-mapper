@@ -38,7 +38,7 @@ def encode(led_id: int, n_digits: int):  # turn LED ID into array of (A, B(inver
 
 def decode(
     pairs: list[tuple[tuple[int, int, int], tuple[int, int, int]]], n_digits: int
-) -> int | None:  # turn color pairs back into an LED ID (None on error)
+) -> int | None:  # turn color pairs back into an LED ID
     digits: list[int] = []
 
     for slot_a, slot_b in pairs:  # go through each Manchester pair
@@ -58,14 +58,15 @@ def decode(
     return sum(d * BASE**i for i, d in enumerate(data))  # base-6 digits -> integer ID
 
 
-n_leds = 512  # number of LEDs on the strip
-n_digits = n_digits_for(n_leds)
+if __name__ == "__main__":
+    n_leds = 512  # number of LEDs on the strip
+    n_digits = n_digits_for(n_leds)
 
-pairs = encode(340, n_digits)
+    pairs = encode(340, n_digits)
 
-for i, (slot_a, slot_b) in enumerate(pairs):  # show every pair
-    print(f"Pair {i}:")  # pair number
-    print_color_block(slot_a, slot_a)  # color in slot A
-    print_color_block(slot_b, slot_b)  # color in slot B
+    for i, (slot_a, slot_b) in enumerate(pairs):  # show every pair
+        print(f"Pair {i}:")  # pair number
+        print_color_block(slot_a, slot_a)  # color in slot A
+        print_color_block(slot_b, slot_b)  # color in slot B
 
-print("Decoded:", decode(pairs, n_digits))
+    print("Decoded:", decode(pairs, n_digits))

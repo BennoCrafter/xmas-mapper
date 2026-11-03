@@ -1,3 +1,5 @@
 requests
 webcolors
 opencv-python
+bleak
+cryptography
