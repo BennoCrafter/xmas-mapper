@@ -9,12 +9,15 @@ Protocol (decoded from PacketLogger captures of the Govee Home app):
     on the remaining tail bytes, same key for both.
   * Plaintext packets end with an XOR checksum of all preceding bytes.
   * DIY drawing (confirmed):
-      a4 00 00 01 02 00 03 <effect> <speed %> <brightness %> <background RGB>
+      a4 00 00 01 <packets> 00 03 <effect> <speed %> <brightness %> <background RGB>
       <groups u16 LE> then per group:
         <count u16 LE> <R G B> <count of indices >= 256, u16 LE>
         <indices < 256, 1 byte each> <indices >= 256, u16 LE each>
       <xor>
-    then  a4 ff ff xor             (end marker, light answers a4 03)
+    split into parts of at most 505 bytes (the app's size): a4 <part u16 LE> <data> <xor>,
+    the last part numbered ff ff, so a small drawing is  a4 00 00 <all> xor  +  a4 ff ff xor
+    (light answers a4 03), middle parts numbered 01 00, 02 00, ... <packets> counts all parts,
+    the empty last one included. Confirmed up to 3 parts (124 colors), see demo3.pklg.
     then  33 05 0a 20 03 03 ...    (switch to DIY mode, light answers 33 05 00)
   * Whole-strip color (confirmed): 33 05 15 01 RR GG BB 00 00 00 00 00 ff 7f ...
   * Background "off" as sent by the app: 01 01 01.
@@ -163,6 +166,9 @@ def check_percent(name, v) -> int:
 
 
 # ---------- packet builders ----------
+PART_SIZE = 505  # the app splits drawings into packets of this size
+
+
 def diy_packet(groups, effect, speed, brightness, background) -> bytes:
     """groups: list of (rgb bytes, [indices])"""
     body = bytearray(b"\xa4\x00\x00\x01\x02\x00\x03")
@@ -178,11 +184,24 @@ def diy_packet(groups, effect, speed, brightness, background) -> bytes:
     return with_checksum(bytes(body))
 
 
+def diy_parts(pkt: bytes, size=PART_SIZE) -> list:
+    """Split a drawing from diy_packet() into the packets the light expects."""
+    data, n = bytearray(pkt[3:-1]), size - 4
+    count = max(2, -(-len(data) // n))  # the last part is always sent, even empty
+    data[1] = count  # the light only draws as many parts as the header announces
+    chunks = [data[i : i + n] for i in range(0, len(data), n)]
+    if len(chunks) < 2:
+        chunks.append(b"")
+    return [
+        with_checksum(b"\xa4" + (i if i < len(chunks) - 1 else 0xFFFF).to_bytes(2, "little") + bytes(c))
+        for i, c in enumerate(chunks)
+    ]
+
+
 def strip_color_packet(rgb: bytes) -> bytes:
     return frame20(0x33, 0x05, 0x15, 0x01, *rgb, 0, 0, 0, 0, 0, 0xFF, 0x7F)
 
 
-END_MARKER = with_checksum(b"\xa4\xff\xff")
 DIY_MODE = frame20(0x33, 0x05, 0x0A, 0x20, 0x03, 0x03)
 KEEPALIVE = frame20(0xAA, 0x00)
 
@@ -300,13 +319,16 @@ class GoveeStrip:
         return list(by_color.items())
 
     def packet(self, limit=None) -> bytes:
-        """The drawing. If it is longer than limit, the most common color becomes the background
-        so fewer LEDs are sent; that is how the app fits (almost) the whole strip in one packet."""
+        """The drawing. If it is longer than limit, the color giving the shortest packet becomes the
+        background so fewer LEDs are sent; that is how the app fits (almost) the whole strip in one packet."""
         pkt = diy_packet(self._groups(), self.effect, self.speed, self.brightness, self.background)
         if limit and len(pkt) > limit:
-            colors = [self.leds.get(i, OFF) for i in range(TOTAL_LEDS)]
-            common = max(set(colors), key=colors.count)
-            pkt = diy_packet(self._groups(common), self.effect, self.speed, self.brightness, common)
+            # not simply the most common color: LEDs >= 256 cost 2 bytes each
+            colors = {self.leds.get(i, OFF) for i in range(TOTAL_LEDS)}
+            pkt = min(
+                (diy_packet(self._groups(c), self.effect, self.speed, self.brightness, c) for c in colors),
+                key=len,
+            )
         return pkt
 
     # ----- sending -----
@@ -318,18 +340,14 @@ class GoveeStrip:
         drawing's replies, so the next frame overlaps the light's answer (~2x faster
         for animations).
         """
-        limit = self.max_packet
-        pkt = self.packet(limit)
-        if len(pkt) > limit:
-            raise ValueError(
-                f"drawing needs {len(pkt)} bytes, this link allows {limit}. Use fewer LEDs or fewer different colors."
-            )
+        size = min(self.max_packet, PART_SIZE)
+        parts = diy_parts(self.packet(size), size)
         async with self._lock:
             if not self._pending:
                 self._drain()
-            # all three back to back, the light answers in order: one round trip, not two
-            await self._send(pkt)
-            await self._send(END_MARKER)
+            # all back to back, the light answers in order: one round trip, not two
+            for part in parts:
+                await self._send(part)
             await self._send(DIY_MODE)
             self._pending += 1
             await self._wait_acks(0 if wait else 1)

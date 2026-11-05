@@ -170,12 +170,8 @@ def describe(p, direction):
         return "Device info reply (contains identifiers, do not share)"
     if p[0] == 0xEE:
         return "Status from strip"
-    if p[:3] == b"\xa4\xff\xff":
-        return "DIY end marker"
-    if p[0] == 0xA4:
-        if from_strip:
-            return "DIY acknowledgement" if p[1] == 0x03 else f"DIY reply a4 {p[1]:02x}"
-        return parse_diy(p)
+    if p[0] == 0xA4 and from_strip:
+        return "DIY acknowledgement" if p[1] == 0x03 else f"DIY reply a4 {p[1]:02x}"
     if p[0] == 0x33 and from_strip:
         return f"Acknowledgement 33 {p[1]:02x}"
     if p[:2] == b"\x33\x01":
@@ -207,6 +203,7 @@ def main():
     write_h, notify_h = defaultdict(lambda: None), defaultdict(lambda: None)
     keys = {}  # conn -> session key
     handshake_sent = {}  # conn -> True once e7 01 came from the iPhone
+    diy = {}  # conn -> drawing bytes of the parts sent so far
 
     for ts, direction, conn, att in att_packets(args.pklg):
         tm = datetime.datetime.fromtimestamp(ts).strftime("%H:%M:%S.%f")[:-3]
@@ -266,7 +263,16 @@ def main():
             continue
         if only and plain[0] not in only:
             continue
-        print(f"{tm}  {label}  {plain.hex(' ')}   {describe(plain, direction)}")
+        desc = describe(plain, direction)
+        # a drawing is sent as parts a4 <part u16> <data> xor, the last one numbered ff ff
+        if plain[0] == 0xA4 and direction != "RX":
+            part = int.from_bytes(plain[1:3], "little")
+            if part == 0xFFFF:
+                desc = parse_diy(b"\xa4\x00\x00" + diy.pop(conn, b"") + plain[3:])
+            else:
+                diy[conn] = (diy.get(conn, b"") if part else b"") + plain[3:-1]
+                desc = f"DIY part {part + 1} ({len(plain) - 4} bytes, decoded at the last part)"
+        print(f"{tm}  {label}  {plain.hex(' ')}   {desc}")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# govee_pklg_decode
+# Govee H6871 Decryptor (partly reverse-engineered)
 
 Decrypts and labels Bluetooth traffic between the Govee Home app and a Govee light H6871 from an Apple PacketLogger capture (`.pklg`).
 
@@ -53,8 +53,8 @@ Each packet is printed with time, direction (`iPhone → Strip` or `Strip → iP
 | `ab …` | Device info request / reply | confirmed |
 | `ee …` | Status from strip | confirmed |
 | `33 05 15 01 RR GG BB …` | Whole-strip color, with RGB and mask | confirmed |
-| `a4 00 00 …` | DIY drawing, fully decoded (see below) | confirmed |
-| `a4 ff ff` | DIY end marker | confirmed |
+| `a4 00 00 …` | DIY drawing, part 1 | confirmed |
+| `a4 ff ff …` | DIY last part; drawings over 505 bytes continue here, otherwise empty. The parts are joined and the drawing is fully decoded here (see below) | confirmed |
 | `33 05 0a 20 03 03` | DIY apply (switch to DIY mode) | inferred |
 | `a4 03` from strip | DIY acknowledgement | confirmed |
 | `33 xx` from strip | Acknowledgement | confirmed |
@@ -65,7 +65,7 @@ Each packet is printed with time, direction (`iPhone → Strip` or `Strip → iP
 
 ### DIY packet decoding
 
-For `a4 00 00 …` packets the script shows:
+For each drawing (on its `a4 ff ff` line) the script shows:
 
 - **Effect** (byte 7) with name: `14` Breathe, `0f` Twinkle, `13` Fade
 - **Speed** (byte 8) in percent
@@ -84,7 +84,3 @@ DIY | effect=13 (Fade) speed=41% brightness=100% background=ff921d
 ## Extending
 
 New effect codes can be added to the `EFFECTS` dictionary at the top of the labels section. Unknown commands appear as `(unknown)`.
-
-## Privacy note
-
-Device info replies (`ab …` from the strip) contain device identifiers and what looks like a device key. Don't post that output publicly.
