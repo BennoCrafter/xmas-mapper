@@ -6,14 +6,6 @@ where each LED actually sits on the tree.
 Hardware: Govee H6870 / H6871 Christmas tree string light (250/375 addressable LEDs),
 controlled over its encrypted BLE protocol. See [H6871.md](H6871.md) for the protocol.
 
-## Status
-
-- [x] BLE driver: per-LED color, effects, power, brightness
-- [x] Decoder for Govee Home app captures ([docs/pklg_decode.md](docs/pklg_decode.md))
-- [ ] Scan: each LED blinks its ID as a color code, a camera finds it ([Plan.md](Plan.md))
-- [ ] Point cloud of LED positions
-- [ ] 3D effects
-
 ## Setup
 
 ```sh
