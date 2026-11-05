@@ -212,6 +212,7 @@ class GoveeStrip:
         self._rx = asyncio.Queue()
         self._lock = asyncio.Lock()
         self._ka_task = None
+        self._pending = 0  # drawings sent whose replies were not read yet
 
     # ----- connection -----
     async def __aenter__(self):
@@ -242,6 +243,8 @@ class GoveeStrip:
             self._ka_task.cancel()
             self._ka_task = None
         if self._client and self._client.is_connected:
+            await self._wait_acks()  # don't cut off the last show(wait=False)
+        if self._client and self._client.is_connected:
             await self._client.disconnect()
 
     @property
@@ -250,7 +253,8 @@ class GoveeStrip:
         return char.max_write_without_response_size
 
     # ----- local state -----
-    def set(self, leds, color):
+    def set(self, leds: list[int], color):
+        """Set the color of the specified LEDs. Run show() to send the changes."""
         rgb = parse_rgb(color)
         for i in parse_leds(leds):
             self.leds[i] = rgb
@@ -285,49 +289,73 @@ class GoveeStrip:
         self.background = parse_rgb(color)
         return self
 
-    def _groups(self):
+    def _groups(self, background=None):
+        """LEDs grouped by color, leaving out those the background already shows (unset LEDs are off)."""
+        background = background or self.background
         by_color = {}
-        for i, rgb in self.leds.items():
-            if rgb == self.background:
-                continue  # same as background, no need to send
-            by_color.setdefault(rgb, []).append(i)
-        # with a visible background, "off" LEDs must be sent explicitly
-        if self.background != OFF:
-            lit = set(self.leds)
-            off = [i for i in range(TOTAL_LEDS) if i not in lit]
-            if off:
-                by_color.setdefault(OFF, []).extend(off)
-        return [(rgb, sorted(idx)) for rgb, idx in by_color.items()]
+        for i in range(TOTAL_LEDS):
+            rgb = self.leds.get(i, OFF)
+            if rgb != background:
+                by_color.setdefault(rgb, []).append(i)
+        return list(by_color.items())
 
-    def packet(self) -> bytes:
-        return diy_packet(self._groups(), self.effect, self.speed, self.brightness, self.background)
+    def packet(self, limit=None) -> bytes:
+        """The drawing. If it is longer than limit, the most common color becomes the background
+        so fewer LEDs are sent; that is how the app fits (almost) the whole strip in one packet."""
+        pkt = diy_packet(self._groups(), self.effect, self.speed, self.brightness, self.background)
+        if limit and len(pkt) > limit:
+            colors = [self.leds.get(i, OFF) for i in range(TOTAL_LEDS)]
+            common = max(set(colors), key=colors.count)
+            pkt = diy_packet(self._groups(common), self.effect, self.speed, self.brightness, common)
+        return pkt
 
     # ----- sending -----
-    async def show(self):
-        """Send the current state as a DIY drawing."""
-        pkt = self.packet()
+    async def show(self, wait=True):
+        """
+        Send the current state as a DIY drawing.
+
+        wait=False returns once the drawing is sent and only waits for the previous
+        drawing's replies, so the next frame overlaps the light's answer (~2x faster
+        for animations).
+        """
         limit = self.max_packet
+        pkt = self.packet(limit)
         if len(pkt) > limit:
             raise ValueError(
                 f"drawing needs {len(pkt)} bytes, this link allows {limit}. Use fewer LEDs or fewer different colors."
             )
         async with self._lock:
-            self._drain()
+            if not self._pending:
+                self._drain()
+            # all three back to back, the light answers in order: one round trip, not two
             await self._send(pkt)
             await self._send(END_MARKER)
-            await self._expect(b"\xa4\x03")
             await self._send(DIY_MODE)
-            await self._expect(b"\x33\x05")
+            self._pending += 1
+            await self._wait_acks(0 if wait else 1)
 
     async def fill(self, color):
         """Whole strip in one color (separate mode, ignores the DIY state)."""
         async with self._lock:
+            await self._wait_acks()
             self._drain()
             await self._send(strip_color_packet(parse_rgb(color)))
             await self._expect(b"\x33\x05")
 
-    async def power(self, on: bool):
+    async def _wait_acks(self, keep=0):
+        """Read replies of sent drawings until only `keep` are left unanswered. Call with the lock held."""
+        try:
+            while self._pending > keep:
+                await self._expect(b"\xa4\x03")
+                await self._expect(b"\x33\x05")
+                self._pending -= 1
+        except TimeoutError:
+            self._pending = 0
+            raise
+
+    async def power(self, on: bool = True):
         async with self._lock:
+            await self._wait_acks()
             self._drain()
             await self._send(frame20(0x33, 0x01, 0x01 if on else 0x00))
             await self._expect(b"\x33\x01")
@@ -384,7 +412,8 @@ class GoveeStrip:
                 await self._send(KEEPALIVE)
             await asyncio.sleep(0.2)
             async with self._lock:
-                self._drain()
+                if not self._pending:
+                    self._drain()
 
 
 # ---------- CLI ----------
