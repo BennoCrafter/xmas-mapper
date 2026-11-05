@@ -62,7 +62,7 @@ if __name__ == "__main__":
     n_leds = 512  # number of LEDs on the strip
     n_digits = n_digits_for(n_leds)
 
-    pairs = encode(340, n_digits)
+    pairs = encode(11, n_digits)
 
     for i, (slot_a, slot_b) in enumerate(pairs):  # show every pair
         print(f"Pair {i}:")  # pair number
