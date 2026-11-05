@@ -10,9 +10,10 @@ sys.path.insert(0, str(ROOT / "src"))  # light tests import govee_strip
 TOOLS = {
     "leds": ("src/govee_strip.py", "control the Govee H6871 (--help for options)"),
     "decode": ("scripts/pklg_decode.py", "decode a PacketLogger .pklg capture"),
-    "led-ids": ("scripts/led_id_codec.py", "demo of LED id color encoding"),
+    "led-ids": ("src/led_id_codec.py", "demo of LED id color encoding"),
     "test-sweep": ("light_tests/blue_sweep.py", "light test: blue LED sweep"),
     "test-rainbow": ("light_tests/rainbow.py", "light test: rainbow drawing"),
+    "blink-led-id": ("light_tests/blink_led_id.py", "light test: blink an LED by ID"),
 }
 
 

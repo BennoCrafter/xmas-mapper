@@ -18,10 +18,12 @@ def n_digits_for(n_leds: int) -> int:  # how many base-6 digits are needed for n
     digits = 1
     while BASE**digits < n_leds:
         digits += 1
-    return digits  # e.g. 4 for 512 LEDs, because 6^4 = 1296
+    return digits  # e.g. 4 for 512 LEDs, because 6^4 = 1296 and 6^3 = 216
 
 
-def encode(led_id: int, n_digits: int):  # turn LED ID into array of (A, B(invert)) color pairs
+def encode(
+    led_id: int, n_digits: int
+) -> list[tuple[tuple[int, int, int], tuple[int, int, int]]]:  # turn LED ID into array of (A, B(invert)) color pairs
     digits = []
     for _ in range(n_digits):
         led_id, rest = divmod(led_id, BASE)  # rest = lowest digit, led_id = remaining value
