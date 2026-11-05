@@ -28,12 +28,12 @@ Protocol (decoded from PacketLogger captures of the Govee Home app):
 Quit the Govee app first: only one Bluetooth client can be connected at a time.
 
   pip install bleak cryptography
-  python govee_ble_leds.py --scan
-  python govee_ble_leds.py --on 217 --color ff0000
-  python govee_ble_leds.py --on 0-9,100 --color 00ff00 --on 370-374 --color 0000ff
-  python govee_ble_leds.py --fill ff8000
-  python govee_ble_leds.py --power off
-  python govee_ble_leds.py              # interactive, type "help"
+  python main.py leds --scan
+  python main.py leds --on 217 --color ff0000
+  python main.py leds --on 0-9,100 --color 00ff00 --on 370-374 --color 0000ff
+  python main.py leds --fill ff8000
+  python main.py leds --power off
+  python main.py leds              # interactive, type "help"
 
 Use as a library:
 

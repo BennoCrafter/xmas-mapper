@@ -1,6 +1,6 @@
 import asyncio
 
-from govee_ble_leds import GoveeStrip
+from govee_strip import GoveeStrip
 
 
 async def main():

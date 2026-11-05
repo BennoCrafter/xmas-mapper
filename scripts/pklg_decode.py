@@ -6,9 +6,9 @@ Capturing: quit the Govee app, start a PacketLogger trace, then open the app
 (so the e7 01 / e7 02 handshake is included), then perform your actions.
 
   pip install cryptography
-  python govee_pklg_decode.py capture.pklg
-  python govee_pklg_decode.py capture.pklg --no-keepalive     # hide aa packets
-  python govee_pklg_decode.py capture.pklg --only a4 33        # only certain commands
+  python main.py decode capture.pklg
+  python main.py decode capture.pklg --no-keepalive     # hide aa packets
+  python main.py decode capture.pklg --only a4 33        # only certain commands
 """
 
 import argparse

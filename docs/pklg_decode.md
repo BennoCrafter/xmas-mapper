@@ -11,9 +11,9 @@ pip install cryptography
 ## Usage
 
 ```
-python govee_pklg_decode.py capture.pklg
-python govee_pklg_decode.py capture.pklg --no-keepalive   # hide keepalive (aa) packets
-python govee_pklg_decode.py capture.pklg --only a4 33      # show only packets starting with a4 or 33
+python main.py decode capture.pklg
+python main.py decode capture.pklg --no-keepalive   # hide keepalive (aa) packets
+python main.py decode capture.pklg --only a4 33      # show only packets starting with a4 or 33
 ```
 
 ## Recording a capture
