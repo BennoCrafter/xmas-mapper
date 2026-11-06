@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Per-LED control of a Govee H6871 over Bluetooth, from a Mac (or any PC with BLE).
 

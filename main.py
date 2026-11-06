@@ -11,9 +11,11 @@ TOOLS = {
     "leds": ("src/govee_strip.py", "control the Govee H6871 (--help for options)"),
     "decode": ("scripts/pklg_decode.py", "decode a PacketLogger .pklg capture"),
     "led-ids": ("src/led_id_codec.py", "demo of LED id color encoding"),
+    "led-detector": ("src/led_detector.py", "detect colored LED blobs in an image, video or live feed"),
     "test-sweep": ("light_tests/blue_sweep.py", "light test: blue LED sweep"),
     "test-rainbow": ("light_tests/rainbow.py", "light test: rainbow drawing"),
-    "blink-led-id": ("light_tests/blink_led_id.py", "light test: blink an LED by ID"),
+    "set-all": ("light_tests/set_all.py", "light test: set all LEDs to a color"),
+    "blink-led-id": ("light_tests/blink_led_id.py", "light test: blink an LED ID (<id> or all)"),
 }
 
 

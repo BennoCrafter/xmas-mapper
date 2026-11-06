@@ -1,33 +1,44 @@
 import asyncio
+import sys
 
-from govee_strip import GoveeStrip
-from led_id_codec import encode, n_digits_for
+from govee_strip import TOTAL_LEDS, GoveeStrip
+from led_id_codec import RGB, LedIdCodec
 
 
-async def main(n: int = 0):
+async def main(ids: list[int], duration: float = 1, repeats: int = 1):
     print("Connecting...")
     async with GoveeStrip("6871", verbose=False) as strip:
         print("Connected.")
 
+        strip.set_brightness(30)
         await strip.power()
         strip.clear()
         await strip.show()
 
-        encoded = encode(n, n_digits_for(375))
-        for i, (slot_a, slot_b) in enumerate(encoded):
-            print(f"Blinking pair {i}")  # pair number
+        codec = LedIdCodec(n_leds=TOTAL_LEDS)
+        encoded = {n: codec.encode(n) for n in ids}  # every LED blinks its own ID at the same time
 
-            await blink_color(strip, n, slot_a)
-            await blink_color(strip, n, slot_b)
+        for _ in range(repeats):
+            for i in range(codec.n_digits + 1):  # data digits + check digit
+                print(f"Blinking pair {i}")  # pair number
+
+                for slot in (0, 1):  # slot A, then slot B
+                    for n, pairs in encoded.items():
+                        set_color(strip, n, pairs[i][slot])
+                    await strip.show(wait=True)
+                    await asyncio.sleep(duration)
+
+                # white flash: symbols are closed under inversion, so B of this pair can equal A of the next
+                strip.set(list(encoded), "#FFFFFF")
+                await strip.show(wait=True)
+                await asyncio.sleep(duration)
 
 
-async def blink_color(strip: GoveeStrip, n: int, color: tuple[int, int, int], duration: float = 0.5):
+def set_color(strip: GoveeStrip, n: int, color: RGB):
     r, g, b = (int(c * 255) for c in color)
-
     strip.set([n], f"#{r:02X}{g:02X}{b:02X}")
-    await strip.show(wait=True)
-    await asyncio.sleep(duration)
 
 
 if __name__ == "__main__":
-    asyncio.run(main(n=11))
+    arg = sys.argv[1] if len(sys.argv) > 1 else "11"  # LED id, or "all"
+    asyncio.run(main(list(range(TOTAL_LEDS)) if arg == "all" else [int(arg)]))

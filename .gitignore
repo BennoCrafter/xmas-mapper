@@ -3,3 +3,5 @@ venv
 .env
 __pycache__/
 demopackets
+assets/demo_image.jpeg
+demo
