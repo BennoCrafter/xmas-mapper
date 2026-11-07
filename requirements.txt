@@ -2,3 +2,4 @@ opencv-python
 bleak
 cryptography
 imutils
+prompt_toolkit

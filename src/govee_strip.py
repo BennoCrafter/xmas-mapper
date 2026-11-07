@@ -48,6 +48,7 @@ import asyncio
 import os
 
 from bleak import BleakClient, BleakScanner
+from prompt_toolkit import PromptSession
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 WRITE_UUID = "00010203-0405-0607-0809-0a0b0c0d2b11"
@@ -446,13 +447,22 @@ HELP = """commands:
   speed <0-100>        effect speed
   power on|off         power
   list                 show which LEDs are set
-  empty line           quit"""
+  empty line / Ctrl+D  quit"""
 
 
 async def interactive(strip: GoveeStrip):
     print('Connected. Type "help" for commands.')
     color = b"\xff\x00\x00"
-    while line := (await asyncio.to_thread(input, "> ")).strip():
+    session = PromptSession()  # line editing, up/down history
+    while True:
+        try:
+            line = (await session.prompt_async("> ")).strip()
+        except KeyboardInterrupt:  # Ctrl+C clears the line
+            continue
+        except EOFError:  # Ctrl+D quits
+            break
+        if not line:
+            break
         cmd, *args = line.split()
         cmd = cmd.lower()
         try:
