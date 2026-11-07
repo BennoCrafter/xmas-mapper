@@ -58,6 +58,12 @@ TOTAL_LEDS = 375
 
 OFF = b"\x01\x01\x01"  # what the app sends for "background off"
 
+COLORS = {
+    "red": "ff0000", "green": "00ff00", "blue": "0000ff", "white": "ffffff",
+    "yellow": "ffff00", "cyan": "00ffff", "magenta": "ff00ff", "orange": "ff8000",
+    "purple": "8000ff", "pink": "ff4080", "warm": "ffb060",
+}
+
 # effect codes (byte 7 of the DIY header), confirmed from captures
 EFFECTS = {"twinkle": 0x0F, "fade": 0x13, "breathe": 0x14}
 # assumption: an effect at speed 0 should stand still. Change once a real
@@ -115,13 +121,16 @@ def frame20(*data: int) -> bytes:
 
 # ---------- value parsing ----------
 def parse_rgb(v) -> bytes:
-    """'ff0000', '#ff0000', 'off', (255, 0, 0) or b'\\xff\\x00\\x00' -> 3 bytes."""
+    """'ff0000', '#ff0000', 'red', 'off', (255, 0, 0) or b'\\xff\\x00\\x00' -> 3 bytes."""
     if isinstance(v, (bytes, bytearray)) or isinstance(v, (tuple, list)):
         rgb = bytes(v)
     elif str(v).lower() == "off":
         return OFF
     else:
-        rgb = bytes.fromhex(str(v).lstrip("#"))
+        try:
+            rgb = bytes.fromhex(COLORS.get(str(v).lower(), str(v)).lstrip("#"))
+        except ValueError:
+            raise ValueError(f"color must be RRGGBB or one of {', '.join(COLORS)}, got {v!r}") from None
     if len(rgb) != 3:
         raise ValueError(f"color must be RRGGBB, got {v!r}")
     if rgb == b"\x00\x00\x00":
@@ -436,7 +445,7 @@ class GoveeStrip:
 
 # ---------- CLI ----------
 HELP = """commands:
-  on <leds> [color]    light LEDs, e.g. "on 0-9,100 ff0000" (color: RRGGBB, default last color)
+  on <leds> [color]    light LEDs, e.g. "on 0-9,100 ff0000" (color: RRGGBB or name, default last color)
   off <leds>           turn LEDs off, e.g. "off 5"
   clear                all LEDs off
   fill <color>         whole strip one color (separate mode)
@@ -515,7 +524,7 @@ async def main():
     ap.add_argument("--address", help="connect by address/UUID instead of name")
     ap.add_argument("--on", action="append", default=[], help="LEDs to light, e.g. 217 or 0-9,100")
     ap.add_argument(
-        "--color", action="append", default=[], help="color for the matching --on (RRGGBB); the last one is reused"
+        "--color", action="append", default=[], help="color for the matching --on (RRGGBB or red, green, ...); the last one is reused"
     )
     ap.add_argument("--fill", help="whole strip one color")
     ap.add_argument("--power", choices=["on", "off"])
