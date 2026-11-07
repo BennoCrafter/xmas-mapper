@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LED Viewer</title>
+<style>
+  :root {
+    --bg: #0e0f13; --panel: #171920; --line: #262933; --text: #e6e7eb; --muted: #8b8f9c;
+    --accent: #ffb347; --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: grid; grid-template-rows: auto 1fr auto;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+  header { display: flex; align-items: baseline; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
+  header .meta { color: var(--muted); font-variant-numeric: tabular-nums; }
+  header .keys { margin-left: auto; color: var(--muted); font-size: 12px; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font: inherit; color: var(--text); }
+
+  main { display: grid; grid-template-columns: 1fr 260px; min-height: 0; }
+  .stage { position: relative; min-height: 0; display: grid; place-items: center; padding: 16px; }
+  .stage svg { max-width: 100%; max-height: 100%; border-radius: var(--radius); background: #000; }
+  .marker { cursor: pointer; }
+  .marker text { paint-order: stroke; stroke: #000; font-weight: 600; font-family: ui-monospace, monospace; }
+
+  aside { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; }
+  aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 16px 16px 8px; }
+  .led { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 16px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .led:hover { background: #1f222b; }
+  .led.sel { background: #2a2418; box-shadow: inset 3px 0 var(--accent); }
+  .swatch { width: 22px; height: 22px; border-radius: 6px; border: 1px solid #ffffff22; flex: none; }
+  .led .id { font-weight: 600; width: 40px; }
+  .led .rgb { color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; }
+  .empty { color: var(--muted); padding: 0 16px; }
+
+  footer { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 20px; display: grid; gap: 10px; }
+  .controls { display: flex; align-items: center; gap: 8px; }
+  button.ctl { background: #22252e; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  button.ctl:hover { border-color: var(--muted); }
+  button.ctl:focus-visible, .led:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  input[type=range] { flex: 1; accent-color: var(--accent); }
+  select { background: #22252e; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px; font: inherit; }
+  .layers { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .seg { background: #22252e; color: var(--text); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+  .seg:hover { border-color: var(--muted); }
+  .seg.on { background: var(--accent); border-color: var(--accent); color: #1c1300; font-weight: 600; }
+  .seg kbd { margin-right: 6px; font-size: 11px; color: inherit; border-color: currentColor; opacity: .6; }
+  .seg:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .toggle { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; }
+  .toggle input { accent-color: var(--accent); }
+  .strip-label { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 8px; }
+  .strip-label label { margin-left: auto; }
+  input[type=number] { width: 64px; background: #22252e; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; font: inherit; }
+  canvas { width: 100%; height: 36px; border-radius: 6px; cursor: pointer; display: block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>LED Viewer</h1>
+  <span class="meta" id="meta">loading…</span>
+  <span class="keys"><kbd>←</kbd><kbd>→</kbd> step &nbsp; <kbd>⇧</kbd>+<kbd>→</kbd> skip 10 &nbsp; <kbd>space</kbd> play &nbsp; <kbd>1</kbd>…<kbd>7</kbd> stage &nbsp; <kbd>m</kbd> markers &nbsp; <span style="border:1px dashed var(--muted);border-radius:50%;display:inline-block;width:10px;height:10px"></span> untracked blob</span>
+</header>
+<main>
+  <div class="stage"><svg id="view"></svg></div>
+  <aside><h2>LEDs in frame</h2><div id="list"></div></aside>
+</main>
+<footer>
+  <div class="layers" id="layers">
+    <label class="toggle"><input type="checkbox" id="markers" checked> show markers</label>
+  </div>
+  <div class="controls">
+    <button class="ctl" id="prev" aria-label="previous frame">◀</button>
+    <button class="ctl" id="play" aria-label="play">▶ play</button>
+    <button class="ctl" id="next" aria-label="next frame">▶</button>
+    <select id="speed" aria-label="playback speed">
+      <option value="500">2 fps</option><option value="200">5 fps</option>
+      <option value="100" selected>10 fps</option><option value="33">30 fps</option>
+    </select>
+    <input type="range" id="slider" min="0" value="0" aria-label="frame">
+  </div>
+  <div class="strip-label"><span id="strip-label">select an LED to see its colors over time</span>
+    <label>change threshold <input type="number" id="threshold" min="0" max="255" placeholder="off" aria-label="color change threshold"></label></div>
+  <canvas id="strip"></canvas>
+</footer>
+<script>
+const $ = id => document.getElementById(id);
+const NS = "http://www.w3.org/2000/svg";
+const rgb = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+let frames = [], cur = 0, sel = null, timer = null, layer = "original";
+const STAGES = { original: "original", gray: "grayscale", blurred: "blur", threshold: "threshold", eroded: "erode", dilated: "dilate", blobs: "blobs ≥ min area" };
+
+fetch("frames.json").then(r => r.json()).then(data => {
+  frames = data;
+  if (!frames.length) return ($("meta").textContent = "no frames");
+  $("slider").max = frames.length - 1;
+  Object.keys(frames[0].files).forEach((stage, i) => {
+    const b = document.createElement("button");
+    b.className = "seg"; b.dataset.stage = stage;
+    b.innerHTML = `<kbd>${i + 1}</kbd>${STAGES[stage] ?? stage}`;
+    b.onclick = () => setLayer(stage);
+    $("layers").insertBefore(b, $("layers").lastElementChild);
+  });
+  setLayer(layer);
+  sel = frames.flatMap(f => f.leds)[0]?.id ?? null;
+  show(0);
+});
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return parent.appendChild(e);
+}
+
+function show(i) {
+  cur = Math.max(0, Math.min(frames.length - 1, i));
+  const f = frames[cur], svg = $("view"), size = Math.max(f.w, f.h);
+  svg.setAttribute("viewBox", `0 0 ${f.w} ${f.h}`);
+  svg.replaceChildren();
+  el("image", { href: f.files[layer], width: f.w, height: f.h }, svg);  // jpeg is downscaled, coords are source px
+  // raw blobs first: one without a tracked marker on top is detected but has no id (yet)
+  for (const [x, y] of $("markers").checked ? f.raw : []) {
+    const r = size / 140;
+    el("circle", { cx: x, cy: y, r: r * 2.2, fill: "none", stroke: "#ffffffcc", "stroke-width": r / 3, "stroke-dasharray": `${r * 0.8} ${r * 0.5}` }, svg);
+  }
+  for (const led of $("markers").checked ? f.leds : []) {
+    const g = el("g", { class: "marker" }, svg), on = led.id === sel, r = size / (on ? 90 : 140);
+    el("circle", { cx: led.x, cy: led.y, r, fill: "none", stroke: on ? "#ffb347" : "#fff", "stroke-width": r / 3 }, g);
+    el("circle", { cx: led.x, cy: led.y, r: r / 2, fill: rgb(led.rgb) }, g);
+    const t = el("text", { x: led.x + r * 1.6, y: led.y + r / 2, "font-size": size / 60, fill: on ? "#ffb347" : "#fff", "stroke-width": size / 300 }, g);
+    t.textContent = `#${led.id}`;
+    g.onclick = () => select(led.id);
+  }
+  if (frames[cur + 1]) new Image().src = frames[cur + 1].files[layer];  // preload for smooth playback
+
+  $("meta").textContent = `${f.name} · frame ${cur + 1} / ${frames.length} · ${f.leds.length} LEDs`;
+  $("slider").value = cur;
+  const leds = [...f.leds].sort((a, b) => (b.id === sel) - (a.id === sel));  // pin selected LED to top
+  $("list").replaceChildren(...(leds.length ? leds.map(led => {
+    const b = document.createElement("button");
+    b.className = "led" + (led.id === sel ? " sel" : "");
+    b.innerHTML = `<span class="swatch" style="background:${rgb(led.rgb)}"></span><span class="id">#${led.id}</span><span class="rgb">${led.rgb.join(" ")}</span>`;
+    b.onclick = () => select(led.id);
+    return b;
+  }) : [Object.assign(document.createElement("p"), { className: "empty", textContent: "no LEDs detected" })]));
+  drawStrip();
+}
+
+function select(id) { sel = id; show(cur); }
+
+function setLayer(stage) {
+  layer = stage;
+  document.querySelectorAll(".seg").forEach(b => b.classList.toggle("on", b.dataset.stage === stage));
+  show(cur);
+}
+
+// same rule as changed() in led_detector.py; c/last are null when the LED was not detected
+function changed(c, last, t) {
+  if (t === null) return true;
+  if (!c || !last) return c !== last;
+  return c.some((v, i) => Math.abs(v - last[i]) > t);
+}
+
+function drawStrip() {
+  const c = $("strip"), dpr = devicePixelRatio, w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  const ctx = c.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.fillStyle = "#22252e"; ctx.fillRect(0, 0, w, h);
+  const step = w / frames.length, t = $("threshold").value === "" ? null : +$("threshold").value;
+  let last, n = 0;  // last = color as written to --out, held until it changes by more than t
+  frames.forEach((f, i) => {
+    const c = f.leds.find(l => l.id === sel)?.rgb ?? null;
+    const ch = changed(c, last, t);
+    if (ch) { last = c; if (c) n++; }
+    if (last) { ctx.fillStyle = rgb(last); ctx.fillRect(i * step, 0, Math.ceil(step), h); }
+    if (ch && c && t !== null) { ctx.fillStyle = "#000"; ctx.fillRect(i * step, 0, 1, h); }  // tick at each change
+  });
+  ctx.fillStyle = "#ffb347"; ctx.fillRect(cur * step + step / 2 - 1, 0, 2, h);
+  $("strip-label").textContent = sel === null ? "select an LED to see its colors over time"
+    : `LED #${sel} over all frames (gaps = not detected)` + (t === null ? "" : ` · ${n} color changes`);
+}
+
+function play(on) {
+  clearInterval(timer); timer = null;
+  if (on) timer = setInterval(() => cur < frames.length - 1 ? show(cur + 1) : play(false), +$("speed").value);
+  $("play").textContent = timer ? "❚❚ pause" : "▶ play";
+}
+
+$("prev").onclick = () => show(cur - 1);
+$("next").onclick = () => show(cur + 1);
+$("play").onclick = () => play(!timer);
+$("markers").onchange = () => show(cur);
+$("threshold").value = new URLSearchParams(location.search).get("threshold") ?? "";
+$("threshold").oninput = () => frames.length && drawStrip();
+$("speed").onchange = () => timer && play(true);
+$("slider").oninput = e => show(+e.target.value);
+$("strip").onclick = e => show(Math.floor(e.offsetX / e.target.clientWidth * frames.length));
+addEventListener("resize", () => frames.length && drawStrip());
+addEventListener("keydown", e => {
+  if (e.target.tagName === "SELECT" || e.target.type === "number") return;
+  const n = e.shiftKey ? 10 : 1;
+  if (e.key === "ArrowRight") show(cur + n);
+  else if (e.key === "ArrowLeft") show(cur - n);
+  else if (e.key === " ") play(!timer);
+  else if (e.key === "Home") show(0);
+  else if (e.key === "End") show(frames.length - 1);
+  else if (e.key === "m") { $("markers").checked = !$("markers").checked; show(cur); }
+  else if (Object.keys(frames[0]?.files ?? {})[e.key - 1]) setLayer(Object.keys(frames[0].files)[e.key - 1]);
+  else return;
+  e.preventDefault();
+});
+</script>
+</body>
+</html>
