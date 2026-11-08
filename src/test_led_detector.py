@@ -47,14 +47,19 @@ def test_classify():
     """LED 30: pair 0 slot B and pair 1 slot A are both cyan, only the white flash separates them."""
     codec = LedIdCodec(n_leds=375)
     cam = lambda c: tuple(250 if v else 40 for v in c)  # camera-ish 0/1 -> 0-255
-    colors = []
-    for a, b in codec.encode(30):
-        colors += [cam(a)] * 5 + [(150, 150, 30)] + [cam(b)] * 5 + [(250, 250, 250)] * 5  # with one blended frame
+    white = (230, 190, 190)  # pinkish: camera white balance
+
+    def blink(led_id, blue=cam((0, 0, 1))):
+        colors = []
+        for a, b in codec.encode(led_id):
+            a, b = (blue if c == (0, 0, 1) else cam(c) for c in (a, b))
+            colors += [a] * 5 + [(150, 150, 30)] + [b] * 5 + [white] * 5  # with one blended frame
+        return colors
+
     assert codec.encode(30)[0][1] == codec.encode(30)[1][0]
-    assert classify(colors, codec) == 30
-    assert classify(colors[8:], codec) is None  # first pair cut off -> no complete id
-    blurred = [(250, 235, 40)] * 5 + colors[5:6] + [(40, 240, 250)] * 5 + colors[11:]  # pair 0: green unclear
-    assert classify(blurred, codec) == 30  # red/cyan or yellow/blue, only one passes the check digit
+    assert classify(blink(30), codec) == 30
+    assert classify(blink(30)[8:], codec) is None  # first pair cut off -> no complete id
+    assert classify(blink(30, blue=(40, 250, 250)), codec) == 30  # blue leaks into green: looks cyan, green is ignored
 
 
 if __name__ == "__main__":

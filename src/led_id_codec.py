@@ -14,13 +14,12 @@ def print_color_block(text: object, rgb: RGB) -> None:
 
 
 class LedIdCodec:
+    # only red and blue tell symbols apart: cameras leak blue into green, so yellow/cyan can't be read as digits
     SYMBOLS: list[RGB] = [
-        (1, 0, 0),  # red
-        (0, 1, 0),  # green
-        (0, 0, 1),  # blue
-        (1, 1, 0),  # yellow
-        (1, 0, 1),  # magenta
-        (0, 1, 1),  # cyan
+        (1, 0, 0),  # red (B slot: cyan)
+        (0, 0, 1),  # blue (B slot: yellow)
+        (1, 0, 1),  # magenta (B slot: green)
+        (0, 1, 0),  # green (B slot: magenta)
     ]  # (never 000 or 111) (white or black)
     BASE = len(SYMBOLS)
 
@@ -29,18 +28,18 @@ class LedIdCodec:
         self.n_digits = self.n_digits_for(n_leds)
 
     @classmethod
-    def n_digits_for(cls, n_leds: int) -> int:  # how many base-6 digits are needed for n_leds IDs
+    def n_digits_for(cls, n_leds: int) -> int:  # how many base-4 digits are needed for n_leds IDs
         digits = 1
         while cls.BASE**digits < n_leds:
             digits += 1
-        return digits  # e.g. 4 for 512 LEDs, because 6^4 = 1296 and 6^3 = 216
+        return digits  # e.g. 5 for 512 LEDs, because 4^5 = 1024 and 4^4 = 256
 
     def encode(self, led_id: int) -> list[Pair]:  # turn LED ID into array of (A, B(invert)) color pairs
         digits: list[int] = []
         for _ in range(self.n_digits):
             led_id, rest = divmod(led_id, self.BASE)  # rest = lowest digit, led_id = remaining value
             digits.append(rest)  # store the digit
-        digits.append(sum(digits) % self.BASE)  # check digit: sum of all digits mod 6
+        digits.append(sum(digits) % self.BASE)  # check digit: sum of all digits mod 4
         return [self._pair(self.SYMBOLS[d]) for d in digits]
 
     @staticmethod
@@ -52,19 +51,14 @@ class LedIdCodec:
         digits: list[int] = []
 
         for slot_a, slot_b in pairs:  # go through each Manchester pair
-            r, g, b = (int(a > b) for a, b in zip(slot_a, slot_b))  # if channel brighter in A than B -> 1 else -> 0
-            pattern: RGB = (r, g, b)
-
-            if pattern not in self.SYMBOLS:  # 000 or 111 can never be sent...
-                return None  # wrong pattern
-
-            digits.append(self.SYMBOLS.index(pattern))  # color pattern -> digit 0-5
+            r, b = (int(slot_a[c] > slot_b[c]) for c in (0, 2))  # red/blue brighter in A than B -> 1 else -> 0
+            digits.append([(s[0], s[2]) for s in self.SYMBOLS].index((r, b)))  # color pattern -> digit 0-3
         data, check = digits[:-1], digits[-1]  # split data digits and check digit
 
         if sum(data) % self.BASE != check:  # recompute check digit and compare
             return None  # mismatch -> transmission error -> discard
 
-        return sum(d * self.BASE**i for i, d in enumerate(data))  # base-6 digits -> integer ID
+        return sum(d * self.BASE**i for i, d in enumerate(data))  # base-4 digits -> integer ID
 
 
 if __name__ == "__main__":

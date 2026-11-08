@@ -165,16 +165,19 @@ def classify(colors: list, codec: LedIdCodec, min_frames: int = 2) -> int | None
 
 
 def soft_decode(pairs: list, codec: LedIdCodec, unclear: float = 0.3) -> int | None:
-    """Channels where A and B differ by less than unclear x the typical difference (camera sees blue as cyan)
-    are tried both ways; only a unique id counts."""
-    margin = unclear * np.median([abs(x - y) for a, b in pairs for x, y in zip(a, b)])
+    """Red/blue channels where A and B differ by less than unclear x the typical difference are tried both ways;
+    only a unique id on the strip counts. Green is ignored, like the codec does."""
+    margin = unclear * np.median([abs(a[c] - b[c]) for a, b in pairs for c in (0, 2)])
     options = []
     for a, b in pairs:
-        channels = [(int(x > y),) if abs(x - y) >= margin else (0, 1) for x, y in zip(a, b)]
+        bits = [int(a[c] > b[c]) if abs(a[c] - b[c]) >= margin else None for c in range(3)]
+        bits[1] = 0  # unused by the codec
+        channels = [(v,) if v is not None else (0, 1) for v in bits]
         options.append([(bits, tuple(1 - v for v in bits)) for bits in itertools.product(*channels)])
     if np.prod([len(o) for o in options]) > 64:  # too blurry to trust the check digit
         return None
     ids = {codec.decode(list(combo)) for combo in itertools.product(*options)} - {None}
+    ids = {i for i in ids if i < codec.n_leds}  # the check digit alone lets some misreads through
     return ids.pop() if len(ids) == 1 else None
 
 
