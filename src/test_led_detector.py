@@ -4,7 +4,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from led_detector import Tracker, changed, classify, detect_leds, frames
+from led_detector import Tracker, changed, classify, detect_leds, frames, white_frames
 from led_id_codec import LedIdCodec
 
 RGB = (255, 0, 0)
@@ -62,10 +62,23 @@ def test_classify():
     assert classify(blink(30, blue=(40, 250, 250)), codec) == 30  # blue leaks into green: looks cyan, green is ignored
 
 
+def test_white_frames():
+    """White is tinted by the camera but identical on every LED; a shared colored digit varies per LED."""
+    pink = (230, 190, 190)
+    seen = [
+        {0: (0, 0, (250, 40, 40)), 1: (0, 0, (40, 40, 250)), 2: (0, 0, (40, 250, 40))},  # mixed colors
+        {i: (0, 0, pink) for i in range(3)} | {3: (0, 0, (228, 191, 190))},  # white
+        {0: (0, 0, (250, 60, 40)), 1: (0, 0, (240, 100, 90)), 2: (0, 0, (250, 40, 120))},  # all red
+        {0: (0, 0, pink)},  # too few LEDs to tell
+    ] * 5
+    assert white_frames(seen) == [False, True, False, False] * 5
+
+
 if __name__ == "__main__":
     test_tracker()
     test_video()
     test_classify()
+    test_white_frames()
     print("ok")
 
 

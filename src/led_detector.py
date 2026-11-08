@@ -19,11 +19,11 @@ EXTS = {".png", ".jpg", ".jpeg"}
 Led = tuple[int, int, tuple[int, int, int]]  # (cx, cy, average rgb 0-255)
 
 
-def detect_leds(image, min_area: int = 50, stages: dict | None = None) -> list[Led]:
+def detect_leds(image, min_area: int = 50, stages: dict | None = None, min_brightness: int = 200) -> list[Led]:
     """Pass a dict as stages to get every intermediate image of the pipeline (for the viewer)."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (11, 11), 0)
-    thresh = cv2.threshold(blurred, 200, 255, cv2.THRESH_BINARY)[1]
+    thresh = cv2.threshold(blurred, min_brightness, 255, cv2.THRESH_BINARY)[1]
     eroded = cv2.erode(thresh, None, iterations=2)
     dilated = cv2.dilate(eroded, None, iterations=4)
 
@@ -34,12 +34,8 @@ def detect_leds(image, min_area: int = 50, stages: dict | None = None) -> list[L
     for label in range(1, num_labels):
         if stats[label, cv2.CC_STAT_AREA] <= min_area:
             continue
-        pixels = rgb[labels == label]
-        # overexposed LED cores read as white; colour lives in the unsaturated pixels around them
-        colored = pixels[pixels.min(axis=1) < 220]
-        avg = np.mean(colored if len(colored) else pixels, axis=0)
         cx, cy = centroids[label]
-        leds.append((int(cx), int(cy), tuple(int(c) for c in avg)))
+        leds.append((int(cx), int(cy), color(rgb[labels == label])))
 
     if stages is not None:
         kept = [label for label in range(1, num_labels) if stats[label, cv2.CC_STAT_AREA] > min_area]
@@ -48,19 +44,26 @@ def detect_leds(image, min_area: int = 50, stages: dict | None = None) -> list[L
     return leds
 
 
+def color(pixels) -> tuple[int, int, int]:
+    # overexposed LED cores read as white; colour lives in the unsaturated pixels around them
+    colored = pixels[pixels.min(axis=1) < 220]
+    return tuple(int(c) for c in np.mean(colored if len(colored) else pixels, axis=0))
+
+
 class Tracker:
     """Keeps LED ids stable across frames: predict, greedily match nearest pairs, coast, confirm."""
 
-    def __init__(self, max_distance: float = 30, max_missed: int = 5, min_hits: int = 3, alpha: float = 0.5):
+    def __init__(self, max_distance: float = 30, max_missed: int = 15, min_hits: int = 3, alpha: float = 0.5):
         self.max_distance = max_distance  # a bit above the fastest per-frame blob movement
-        self.max_missed = max_missed  # frames a track may coast without a detection
+        self.max_missed = max_missed  # frames a track may coast; red/blue LEDs drop below the gray threshold for ~1 s
         self.min_hits = min_hits  # detections before a track gets an id
         self.alpha = alpha  # weight of the new detection; lower = smoother
         self.tracks: list[dict] = []
         self.next_id = 0
 
-    def update(self, leds: list[Led]) -> dict[int, Led]:
-        """Returns confirmed tracks detected in this frame, keyed by stable id."""
+    def update(self, leds: list[Led], image=None, radius: int = 6) -> dict[int, Led]:
+        """Returns confirmed tracks detected in this frame, keyed by stable id.
+        With image, coasting tracks are included too, colored from the image around their prediction."""
         preds = [(t["x"] + t["vx"], t["y"] + t["vy"]) for t in self.tracks]
         pairs = sorted(
             (np.hypot(px - cx, py - cy), ti, di)
@@ -86,6 +89,11 @@ class Tracker:
         for ti, t in enumerate(self.tracks):
             if ti not in matched_t:  # coast along the prediction
                 t.update(x=preds[ti][0], y=preds[ti][1], missed=t["missed"] + 1)
+                x, y = round(t["x"]), round(t["y"])
+                h, w = image.shape[:2] if image is not None else (0, 0)
+                if t["id"] is not None and t["missed"] <= self.max_missed and radius <= x < w - radius and radius <= y < h - radius:
+                    patch = image[y - radius : y + radius + 1, x - radius : x + radius + 1, ::-1].reshape(-1, 3)
+                    seen[t["id"]] = (x, y, color(patch))
         self.tracks = [t for t in self.tracks if t["missed"] <= self.max_missed]
         for di, (cx, cy, rgb) in enumerate(leds):
             if di not in matched_d:
@@ -137,14 +145,28 @@ def saturation(rgb) -> float:
     return (max(rgb) - min(rgb)) / max(max(rgb), 1)
 
 
-def classify(colors: list, codec: LedIdCodec, min_frames: int = 2) -> int | None:
-    """Decodes an LED id from one LED's per-frame colors, sent as A, B, white, A, B, white, ..."""
-    sats = [saturation(rgb) for rgb in colors]
-    cut = np.percentile(sats, 30)  # white is 1 slot in 3; per LED, as camera and LED wash colors out differently
+def white_frames(seen: list[dict[int, Led]], factor: float = 1.7) -> list[bool]:
+    """All LEDs flash white together, so white frames are where every LED shows the same hue.
+    Unlike saturation this survives the camera's white balance tinting white; frames where all LEDs
+    share a colored digit are less uniform, as each LED washes its color out differently."""
+    spread = []
+    for leds in seen:
+        c = np.array([rgb for *_, rgb in leds.values()], float)
+        spread.append(np.std(c / c.sum(axis=1, keepdims=True).clip(1), axis=0).sum() if len(c) >= 3 else np.inf)
+    return list(np.array(spread) < factor * np.percentile(spread, 5))
+
+
+def classify(colors: list, codec: LedIdCodec, min_frames: int = 2, whites: list[bool] | None = None) -> int | None:
+    """Decodes an LED id from one LED's per-frame colors, sent as A, B, white, A, B, white, ...
+    whites marks the white frames (see white_frames); without it they're guessed from this LED's saturation."""
+    if whites is None:
+        sats = [saturation(rgb) for rgb in colors]
+        cut = np.percentile(sats, 30)  # white is 1 slot in 3; per LED, as camera and LED wash colors out differently
+        whites = [sat <= cut for sat in sats]
     groups: list[list] = [[]]  # frames between white flashes: slot A, then slot B
     white = 0  # consecutive white frames; a single one is a blended frame, not a flash
-    for rgb, sat in zip(colors, sats):
-        white = white + 1 if sat <= cut else 0
+    for rgb, is_white in zip(colors, whites):
+        white = white + 1 if is_white else 0
         if white == min_frames:
             groups[-1] = groups[-1][: 1 - min_frames]  # the white frames before this one aren't slot colors
             groups.append([])
@@ -171,6 +193,8 @@ def soft_decode(pairs: list, codec: LedIdCodec, unclear: float = 0.3) -> int | N
     options = []
     for a, b in pairs:
         bits = [int(a[c] > b[c]) if abs(a[c] - b[c]) >= margin else None for c in range(3)]
+        if bits[0] == 0 and bits[2] is None and a[1] - b[1] >= margin:
+            bits[2] = 0  # green vs blue: only green's B slot (magenta) is dark in green; blue's (yellow) isn't
         bits[1] = 0  # unused by the codec
         channels = [(v,) if v is not None else (0, 1) for v in bits]
         options.append([(bits, tuple(1 - v for v in bits)) for bits in itertools.product(*channels)])
@@ -184,11 +208,15 @@ def soft_decode(pairs: list, codec: LedIdCodec, unclear: float = 0.3) -> int | N
 def decode_ids(seen: list[dict[int, Led]], shown: list[dict] | None = None) -> dict[int, int]:
     """Tracked id -> decoded LED id, from every frame's tracks; labels the viewer frames in shown with it."""
     streams: dict[int, list] = {}
-    for leds in seen:
+    for leds, white in zip(seen, white_frames(seen)):
         for i, (_, _, rgb) in leds.items():
-            streams.setdefault(i, []).append(rgb)
+            streams.setdefault(i, []).append((rgb, white))
     codec = LedIdCodec(n_leds=TOTAL_LEDS)
-    ids = {i: led for i, colors in streams.items() if (led := classify(colors, codec)) is not None}
+    ids = {}
+    for i, stream in streams.items():
+        colors, whites = zip(*stream)
+        if (led := classify(colors, codec, whites=whites)) is not None:
+            ids[i] = led
     for f in shown or []:
         for led in f["leds"]:
             led["led"] = ids.get(led["id"])
@@ -217,7 +245,7 @@ def frames(source: str, fps: float = 5):
     cap.release()
 
 
-def track(source: str, min_area: int = 50, max_distance: float = 30, min_hits: int = 3, fps: float = 10, keep_stages: bool = False):
+def track(source: str, min_area: int = 50, max_distance: float = 30, min_hits: int = 3, fps: float = 10, keep_stages: bool = False, min_brightness: int = 200):
     """Yields (name, image, stages, detections, leds) per readable frame; stages is None unless keep_stages."""
     tracker = Tracker(max_distance=max_distance, min_hits=min_hits)
     for name, image in frames(source, fps):
@@ -225,8 +253,8 @@ def track(source: str, min_area: int = 50, max_distance: float = 30, min_hits: i
             print(f"{name}: could not load, skipped")
             continue
         stages = {"original": image} if keep_stages else None
-        detections = detect_leds(image, min_area, stages)
-        yield name, image, stages, detections, tracker.update(detections)
+        detections = detect_leds(image, min_area, stages, min_brightness)
+        yield name, image, stages, detections, tracker.update(detections, image)
 
 
 def viewer_frame(name: str, image, files: dict, detections: list[Led], leds: dict[int, Led]) -> dict:
@@ -246,6 +274,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("folder", help="folder with LED images, or a video file")
     ap.add_argument("--min-area", type=int, default=50, help="min blob size in pixels")
+    ap.add_argument("--min-brightness", type=int, default=200, help="0-255, darker pixels aren't LEDs")
     ap.add_argument("--show", action="store_true", help="open the results in a browser viewer")
     ap.add_argument("--out", default="led_colors.txt", help="txt file with one LED's color per image")
     ap.add_argument("--led-id", type=int, default=0, help="which tracked LED (#n) to write to --out")
@@ -265,7 +294,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         with open(args.out, "w", buffering=1) as out:  # line-buffered: rows survive a hard quit
             for name, image, stages, detections, leds in track(
-                args.folder, args.min_area, args.max_distance, args.min_hits, args.fps, args.show
+                args.folder, args.min_area, args.max_distance, args.min_hits, args.fps, args.show, args.min_brightness
             ):
                 # print(f"{name}: {len(leds)} LEDs")
                 # for i, (cx, cy, rgb) in leds.items():

@@ -33,8 +33,12 @@
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
   .dot.on { background: var(--ok); }
 
-  section[data-view] { display: grid; grid-template-columns: 1fr 320px; min-height: 0; }
+  section[data-view] { display: grid; grid-template-columns: 1fr 0 var(--side, 320px); min-height: 0; }
   .main { min-height: 0; overflow: auto; padding: 24px; }
+  .grip { cursor: col-resize; touch-action: none; margin: 0 -3px; z-index: 1; }
+  .grip:hover, .grip:focus-visible, .resizing .grip { background: var(--accent); outline: 0; }
+  .resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; }
+  .resizing iframe { pointer-events: none; }  /* else the iframe swallows the drag */
   aside { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; }
   .group { padding: 16px; border-bottom: 1px solid var(--line); display: grid; gap: 10px; }
   h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0; font-weight: 600; }
@@ -66,6 +70,8 @@
   .swatches button[aria-pressed=true] { outline: 2px solid var(--text); outline-offset: 1px; }
   input[type=color] { width: 40px; height: 34px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); padding: 2px; cursor: pointer; }
   .devices { display: grid; gap: 4px; }
+  select { background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; width: 100%; }
+  .log { margin: 0; max-height: 240px; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: 11px/1.4 ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; }
   .devices button { display: flex; justify-content: space-between; text-align: left; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
   .devices span { color: var(--muted); font: 12px ui-monospace, monospace; }
 
@@ -87,9 +93,24 @@
   .job:hover { background: #1f222b; }
   .job.sel { background: #2a2418; box-shadow: inset 3px 0 var(--accent); }
   .job .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-  .job .meta { grid-column: 1; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .job .name small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+  .job .meta { grid-column: 1 / -1; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
   .job .meta.failed { color: var(--bad); }
-  .job .actions { grid-row: 1 / 3; grid-column: 2; display: flex; gap: 4px; }
+  .job .actions { display: flex; gap: 4px; }
+  .job .actions { position: relative; }
+  .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 10; display: grid; min-width: 220px; padding: 4px; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px #0008; }
+  .menu[hidden] { display: none; }
+  .menu button { display: grid; gap: 2px; padding: 8px 10px; border: 0; border-radius: 6px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .menu button:hover:not(:disabled), .menu button:focus-visible { background: var(--line); outline: none; }
+  .menu button:disabled { opacity: .5; cursor: default; }
+  .menu small { color: var(--muted); font-size: 12px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 6px; }
+  .stats b { display: block; color: var(--text); font-size: 16px; font-weight: 600; line-height: 1.2; }
+  .stats span { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  .stats .ok b { color: var(--ok); }
+  .stats .warn b { color: var(--accent); }
+  .ratio { display: flex; height: 4px; border-radius: 2px; overflow: hidden; background: var(--raised); margin-top: 8px; }
+  .ratio .ok { background: var(--ok); } .ratio .warn { background: var(--accent); }
   .spin { display: inline-block; width: 9px; height: 9px; border: 2px solid var(--accent); border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; margin-right: 4px; }
   @keyframes spin { to { rotate: 1turn; } }
 
@@ -103,6 +124,7 @@
     body { height: auto; }
     section[data-view] { grid-template-columns: 1fr; }
     aside { border-left: 0; border-top: 1px solid var(--line); }
+    .grip { display: none; }
     #detect .main { min-height: 70vh; }
     .tree { gap: 3px; }
     header { gap: 12px; padding: 0 16px; }
@@ -167,6 +189,17 @@
         <button class="btn grow" id="clear">All off</button>
       </div>
     </div>
+    <div class="group">
+      <h2>Scripts</h2>
+      <select id="script" aria-label="script"></select>
+      <input type="text" id="script-args" placeholder="arguments, e.g. all" spellcheck="false" aria-label="script arguments">
+      <div class="row">
+        <button class="btn primary grow" id="script-run">Run</button>
+        <button class="btn" id="script-stop" disabled>Stop</button>
+      </div>
+      <p class="hint" id="script-status">Runs take over the light connection.</p>
+      <pre class="log" id="script-log" hidden></pre>
+    </div>
   </aside>
 </section>
 
@@ -189,6 +222,7 @@
           <label class="field">Min blob area<input type="number" name="min_area" value="50" min="0"></label>
           <label class="field">Max move px<input type="number" name="max_distance" value="30" min="1" step="any"></label>
           <label class="field">Min hits<input type="number" name="min_hits" value="3" min="1"></label>
+          <label class="field">Min brightness<input type="number" name="min_brightness" value="200" min="0" max="255"></label>
         </div>
       </details>
       <div class="bar" id="upload-bar" hidden><i></i></div>
@@ -336,7 +370,7 @@ async function act(action, body = {}) {
   $("pill").textContent = light.connected ? "sending…" : "connecting…";
   try { setLight(await api(`/api/light/${action}`, body)); }
   catch (err) { toast(err.message); setLight(light); }
-  finally { btns.forEach(b => b.disabled = false); }
+  finally { btns.forEach(b => b.disabled = false); refreshScript(); }  // re-sync run/stop
 }
 
 $("connect").onclick = $("hconnect").onclick = () => act(light.connected ? "disconnect" : "connect");
@@ -357,16 +391,48 @@ $("scan").onclick = async () => {
   } catch (err) { toast(err.message); }
   finally { $("scan").disabled = false; $("scan").textContent = "Scan"; }
 };
-onShow.lights = () => api("/api/light").then(setLight).catch(err => toast(err.message));
+onShow.lights = () => { api("/api/light").then(setLight).catch(err => toast(err.message)); refreshScript(); };
+
+// ----- scripts: main.py tools run on the server, output polled while running -----
+let scriptTimer;
+function setScript({ tools, run }) {
+  if (!$("script").options.length)
+    $("script").replaceChildren(...Object.entries(tools).map(([n, help]) => h("option", { value: n, textContent: `${n} — ${help}` })));
+  const running = run.code === null;
+  $("script-run").disabled = running; $("script-stop").disabled = !running;
+  $("script-status").innerHTML = !run.name ? "Runs take over the light connection."
+    : running ? `<span class="spin"></span>${run.name} running…` : `${run.name} exited with ${run.code}`;
+  $("script-log").hidden = !run.name;
+  const log = $("script-log"), atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+  log.textContent = run.output || "";
+  if (atEnd) log.scrollTop = log.scrollHeight;
+  clearTimeout(scriptTimer);
+  if (running) scriptTimer = setTimeout(refreshScript, 1000);
+  else if (run.name) api("/api/light").then(setLight).catch(() => {});  // the run disconnected the UI
+}
+const refreshScript = () => api("/api/scripts").then(setScript).catch(err => toast(err.message));
+$("script-run").onclick = () => api(`/api/scripts/${$("script").value}`, { args: $("script-args").value }).then(setScript).catch(err => toast(err.message));
+$("script-stop").onclick = () => api("/api/scripts/stop", {}).then(setScript).catch(err => toast(err.message));
 
 // ===== detect =====
 let jobs = [], current = null, pollTimer = null;
 
 function fmtJob(j) {
-  if (j.state === "running") return `<span class="spin"></span>${j.frames} frames · ${j.leds} LEDs`;
-  if (j.state === "failed") return j.error || "failed";
-  return `${j.frames} frames · ${j.leds} LEDs${j.decoded != null ? ` · ${j.decoded} decoded` : ""} · fps ${j.opts.fps}`;
+  if (j.state === "running") return [h("span", { className: "spin" }), `${j.frames} frames · ${j.leds} LEDs so far`];
+  if (j.state === "failed") return [j.error || "failed"];
+  const stat = (n, label, cls = "", title = "") => h("div", { className: cls, title }, h("b", { textContent: n ?? "–" }), h("span", { textContent: label }));
+  const pct = n => `${100 * (n || 0) / Math.max(j.leds, 1)}%`;
+  return [
+    h("div", { className: "stats" },
+      stat(j.frames, "frames", "", `sampled at ${j.opts.fps} fps`), stat(j.leds, "LEDs", "", "tracked LEDs"),
+      stat(j.decoded, "decoded", "ok", "LEDs whose id was read from the blink code"),
+      stat(j.skippers, "skippers", j.skippers ? "warn" : "", "tracked LEDs that weren't decoded and dropped out of some frames")),
+    h("div", { className: "ratio", title: `${j.decoded ?? 0} decoded · ${j.skippers ?? 0} skippers · of ${j.leds} tracked` },
+      h("i", { className: "ok", style: `width:${pct(j.decoded)}` }), h("i", { className: "warn", style: `width:${pct(j.skippers)}` })),
+  ];
 }
+// "20261108-013831-ade9" -> "Nov 8, 01:38"
+const jobDate = id => { const m = id.match(/^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)/); return m ? new Date(m[1], m[2] - 1, m[3], m[4], m[5]).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""; };
 
 function drawJobs() {
   $("jobs").replaceChildren(...(jobs.length ? jobs.map(j => {
@@ -377,28 +443,52 @@ function drawJobs() {
       try { await api(`/api/jobs/${j.id}`, undefined, "DELETE"); if (current === j.id) openJob(null); refreshJobs(); }
       catch (err) { toast(err.message); }
     };
-    const relabel = h("button", { className: "btn ghost", textContent: "↻", ariaLabel: "redo LED labelling", title: "Redo LED labelling", disabled: j.state !== "done" });
-    relabel.onclick = async e => {
-      e.stopPropagation();
-      relabel.disabled = true;
-      try {
+    const redo = h("button", { className: "btn ghost", textContent: "↻", ariaLabel: "redo run", title: "Redo…", ariaHasPopup: "menu", disabled: j.state === "running" });
+    const item = (text, hint, disabled, run) => {
+      const b = h("button", { role: "menuitem", disabled }, text, h("small", { textContent: hint }));
+      b.onclick = async e => {
+        e.stopPropagation();
+        closeMenus();
+        redo.disabled = true;
+        try { await run(); } catch (err) { toast(err.message); redo.disabled = false; }
+      };
+      return b;
+    };
+    const menu = h("div", { className: "menu", role: "menu", hidden: true },
+      item("Redo labelling", "decode the saved tracks again, fast", j.state !== "done", async () => {
         const info = await api(`/api/jobs/${j.id}/label`, {});
         toast(`${info.decoded} LEDs decoded`);
         if (current === j.id) openJob(j.id);  // reload the viewer with the new labels
         refreshJobs();
-      } catch (err) { toast(err.message); relabel.disabled = false; }
+      }),
+      item("Rerun detection", "whole process from the video, same options", false, async () => {
+        await api(`/api/jobs/${j.id}/rerun`, {});
+        await refreshJobs();
+        openJob(j.id);
+      }));
+    menu.onkeydown = e => { e.stopPropagation(); if (e.key === "Escape") { closeMenus(); redo.focus(); } };  // keep Enter from opening the row
+    redo.onclick = e => {
+      e.stopPropagation();
+      const open = menu.hidden;
+      closeMenus();
+      menu.hidden = !open;
+      redo.ariaExpanded = String(open);
+      if (open) menu.querySelector("button:not(:disabled)")?.focus();
     };
-    const clone = h("button", { className: "btn", textContent: "Clone as map", hidden: !j.decoded });
+    const clone = h("button", { className: "btn", textContent: "To map", title: "Clone as map", hidden: !j.decoded });
     clone.onclick = e => { e.stopPropagation(); cloneMap(j.id).catch(err => toast(err.message)); };
     const meta = h("span", { className: "meta" + (j.state === "failed" ? " failed" : "") });
-    meta.innerHTML = fmtJob(j);
+    meta.append(...fmtJob(j));
     const b = h("div", { className: "job" + (j.id === current ? " sel" : ""), tabIndex: 0, role: "button" },
-      h("span", { className: "name", textContent: j.source, title: j.id }), h("span", { className: "actions" }, clone, relabel, del), meta);
+      h("span", { className: "name", title: j.id }, j.source, h("small", { textContent: jobDate(j.id) })), h("span", { className: "actions" }, clone, redo, menu, del), meta);
     b.onclick = () => openJob(j.id);
     b.onkeydown = e => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), openJob(j.id));
     return b;
   }) : [h("p", { className: "hint", style: "padding:0 16px", textContent: "No runs yet." })]));
 }
+
+const closeMenus = () => document.querySelectorAll(".menu").forEach(m => { m.hidden = true; m.previousSibling.ariaExpanded = "false"; });
+addEventListener("click", closeMenus);
 
 function openJob(id) {
   current = id;
@@ -546,6 +636,24 @@ onShow.map = () => { drawMap(); api("/api/light").then(l => { setLight(l); drawM
 
 route();
 api("/api/light").then(setLight).catch(() => {});  // header state, also on pages that don't load it
+// drag (or arrow-key) the sidebar's left edge to resize it; the width is remembered per page
+function sidebarGrips(key) {
+  const set = w => document.documentElement.style.setProperty("--side", `${Math.round(Math.max(200, Math.min(w, innerWidth * 0.7)))}px`);
+  const save = aside => { try { localStorage.setItem(key, aside.offsetWidth); } catch {} };
+  try { const w = +localStorage.getItem(key); if (w) set(w); } catch {}
+  document.querySelectorAll("aside").forEach(aside => {
+    const grip = Object.assign(document.createElement("div"), { className: "grip", tabIndex: 0, role: "separator", ariaLabel: "resize sidebar", ariaOrientation: "vertical" });
+    aside.before(grip);
+    grip.onpointerdown = e => { e.preventDefault(); grip.setPointerCapture(e.pointerId); document.body.classList.add("resizing"); };
+    grip.onpointermove = e => grip.hasPointerCapture(e.pointerId) && set(innerWidth - e.clientX);  // sidebars sit at the right edge
+    grip.onpointerup = grip.onpointercancel = () => { document.body.classList.remove("resizing"); save(aside); };
+    grip.onkeydown = e => {
+      const step = { ArrowLeft: 20, ArrowRight: -20 }[e.key];
+      if (step) { e.preventDefault(); set(aside.offsetWidth + step); save(aside); }
+    };
+  });
+}
+sidebarGrips("xmas-side");
 </script>
 </body>
 </html>

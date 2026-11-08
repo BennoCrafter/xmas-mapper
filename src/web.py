@@ -9,10 +9,14 @@ import asyncio
 import contextlib
 import json
 import os
+import runpy
+import shlex
 import shutil
+import sys
 import threading
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 
 import uvicorn
@@ -54,15 +58,24 @@ def job_info(folder: Path) -> dict:
     info = json.loads((folder / "job.json").read_text())
     if info["state"] == "running" and folder.name not in running:
         info["state"], info["error"] = "failed", "interrupted by a server restart"
+    if info["state"] == "done" and "skippers" not in info:  # runs from before the count existed
+        info["skippers"] = skippers(json.loads((folder / "frames.json").read_text()))
+        write_json(folder / "job.json", info)
     return info | {"id": folder.name}
 
 
-def label(folder: Path, shown: list[dict]) -> int:
-    """Decodes LED ids into the viewer frames and saves them; returns how many tracks decoded."""
+def label(folder: Path, shown: list[dict]) -> dict:
+    """Decodes LED ids into the viewer frames and saves them; returns decoded and skippers counts for job.json."""
     seen = [{led["id"]: (led["x"], led["y"], tuple(led["rgb"])) for led in f["leds"]} for f in shown]
-    decoded = len(decode_ids(seen, shown))
+    ids = decode_ids(seen, shown)
     write_json(folder / "frames.json", shown)
-    return decoded
+    return dict(decoded=len(ids), skippers=skippers(shown))
+
+
+def skippers(shown: list[dict]) -> int:
+    """Undecoded tracks that weren't in every frame (flicker, occlusion, noise); needs labelled viewer frames."""
+    hits = Counter(led["id"] for f in shown for led in f["leds"] if led.get("led") is None)
+    return sum(n < len(shown) for n in hits.values())
 
 
 def run_job(folder: Path, source: Path, info: dict) -> None:
@@ -73,7 +86,7 @@ def run_job(folder: Path, source: Path, info: dict) -> None:
             ids |= leds.keys()
             info.update(frames=len(shown), leds=len(ids))
             write_json(folder / "job.json", info)
-        info["decoded"] = label(folder, shown)
+        info.update(label(folder, shown))
         info["state"] = "done"
     except (Exception, SystemExit) as e:  # frames() exits on unreadable input
         info.update(state="failed", error=str(e))
@@ -95,6 +108,7 @@ async def create_job(request: Request) -> JSONResponse:
             max_distance=float(form.get("max_distance") or 30),
             min_hits=int(form.get("min_hits") or 3),
             fps=float(form.get("fps") or 10),
+            min_brightness=int(form.get("min_brightness") or 200),
         )
     except ValueError:
         return error("options must be numbers")
@@ -138,9 +152,26 @@ async def relabel_job(request: Request) -> JSONResponse:
     if info["state"] != "done":
         return error("job isn't done", 409)
     shown = json.loads((folder / "frames.json").read_text())
-    info["decoded"] = await asyncio.to_thread(label, folder, shown)  # decoding is CPU work, keep the server responsive
+    info.update(await asyncio.to_thread(label, folder, shown))  # decoding is CPU work, keep the server responsive
     write_json(folder / "job.json", {k: v for k, v in info.items() if k != "id"})
     return JSONResponse(info)
+
+
+async def rerun_job(request: Request) -> JSONResponse:
+    folder = job_dir(request.path_params["id"])
+    if not folder:
+        return error("no such job", 404)
+    if folder.name in running:
+        return error("job is still running", 409)
+    info = {k: v for k, v in job_info(folder).items() if k not in ("id", "error", "decoded", "skippers")}
+    video = folder / "input" / info["source"]
+    for f in folder.glob("*.jpg"):  # old stage images; a shorter rerun wouldn't overwrite them all
+        f.unlink()
+    info.update(state="running", frames=0, leds=0)
+    write_json(folder / "job.json", info)
+    running.add(folder.name)
+    threading.Thread(target=run_job, args=(folder, video if video.is_file() else folder / "input", dict(info)), daemon=True).start()
+    return JSONResponse(info | {"id": folder.name})
 
 
 async def viewer(request: Request):
@@ -215,6 +246,53 @@ async def light_action(request: Request) -> JSONResponse:
     return JSONResponse(light_state())
 
 
+# ---------- scripts: the CLI tools from main.py, run as subprocesses ----------
+MAIN = SRC.parent / "main.py"
+TOOLS = {name: help for name, (_, help) in runpy.run_path(str(MAIN))["TOOLS"].items() if name != "ui"}
+script: dict = {}  # the current/last run: name, args, output, code (None while running), proc, task
+
+
+def script_state() -> dict:
+    return dict(tools=TOOLS, run={k: v for k, v in script.items() if k not in ("proc", "task")})  # task: held so it isn't garbage collected
+
+
+async def get_scripts(request: Request) -> JSONResponse:
+    return JSONResponse(script_state())
+
+
+async def watch(proc) -> None:
+    async for line in proc.stdout:
+        script["output"] = (script["output"] + line.decode(errors="replace"))[-20000:]  # keep the tail
+    script["code"] = await proc.wait()
+
+
+async def run_script(request: Request) -> JSONResponse:
+    name, body = request.path_params["name"], await request.json() if await request.body() else {}
+    if name not in TOOLS:
+        return error("unknown script", 404)
+    if script and script["code"] is None:
+        return error(f"{script['name']} is still running", 409)
+    try:
+        args = shlex.split(body.get("args", ""))
+    except ValueError as e:
+        return error(f"bad args: {e}")
+    if strip and light_state()["connected"]:
+        await strip.disconnect()  # the light takes one client; the UI reconnects on its next action
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-u", str(MAIN), name, *args, cwd=SRC.parent, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+    )
+    script.clear()
+    script.update(name=name, args=body.get("args", ""), output="", code=None, proc=proc)
+    script["task"] = asyncio.create_task(watch(proc))
+    return JSONResponse(script_state())
+
+
+async def stop_script(request: Request) -> JSONResponse:
+    if script and script["code"] is None:
+        script["proc"].terminate()
+    return JSONResponse(script_state())
+
+
 # ---------- app ----------
 async def dev_version(request: Request) -> JSONResponse:
     """Changes on every server restart and html edit; the page reloads itself when it does (--reload only)."""
@@ -224,6 +302,8 @@ async def dev_version(request: Request) -> JSONResponse:
 @contextlib.asynccontextmanager
 async def lifespan(app):
     yield
+    if script and script["code"] is None:
+        script["proc"].terminate()
     if strip and light_state()["connected"]:
         await strip.disconnect()  # free the light for the next process (or the Govee app)
 
@@ -234,8 +314,12 @@ routes = [
     Route("/api/jobs", create_job, methods=["POST"]),
     Route("/api/jobs/{id}", delete_job, methods=["DELETE"]),
     Route("/api/jobs/{id}/label", relabel_job, methods=["POST"]),
+    Route("/api/jobs/{id}/rerun", rerun_job, methods=["POST"]),
     Route("/api/light", get_light),
     Route("/api/light/{action}", light_action, methods=["POST"]),
+    Route("/api/scripts", get_scripts),
+    Route("/api/scripts/stop", stop_script, methods=["POST"]),
+    Route("/api/scripts/{name}", run_script, methods=["POST"]),
     Route("/jobs/{id}/", viewer),
     Mount("/jobs", StaticFiles(directory=JOBS)),
 ]

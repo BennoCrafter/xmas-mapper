@@ -21,12 +21,16 @@
   header .keys { margin-left: auto; color: var(--muted); font-size: 12px; }
   kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font: inherit; color: var(--text); }
 
-  main { display: grid; grid-template-columns: 1fr 260px; min-height: 0; }
+  main { display: grid; grid-template-columns: 1fr 0 var(--side, 260px); min-height: 0; }
   .stage { position: relative; min-height: 0; display: grid; place-items: center; padding: 16px; }
   .stage svg { max-width: 100%; max-height: 100%; border-radius: var(--radius); background: #000; }
   .marker { cursor: pointer; }
   .marker text { paint-order: stroke; stroke: #000; font-weight: 600; font-family: ui-monospace, monospace; }
 
+  .grip { cursor: col-resize; touch-action: none; margin: 0 -3px; z-index: 1; }
+  .grip:hover, .grip:focus-visible, .resizing .grip { background: var(--accent); outline: 0; }
+  .resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; }
+  .resizing iframe { pointer-events: none; }  /* else the iframe swallows the drag */
   aside { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; }
   aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 16px 16px 8px; }
   .led { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 16px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
@@ -54,7 +58,6 @@
   .toggle { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; }
   .toggle input { accent-color: var(--accent); }
   .strip-label { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 8px; }
-  .strip-label label { margin-left: auto; }
   input[type=number] { width: 64px; background: #22252e; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; font: inherit; }
   canvas { width: 100%; height: 36px; border-radius: 6px; cursor: pointer; display: block; }
 </style>
@@ -83,8 +86,7 @@
     </select>
     <input type="range" id="slider" min="0" value="0" aria-label="frame">
   </div>
-  <div class="strip-label"><span id="strip-label">select an LED to see its colors over time</span>
-    <label>change threshold <input type="number" id="threshold" min="0" max="255" placeholder="off" aria-label="color change threshold"></label></div>
+  <div class="strip-label" id="strip-label">select an LED to see its colors over time</div>
   <canvas id="strip"></canvas>
 </footer>
 <script>
@@ -92,6 +94,7 @@ const $ = id => document.getElementById(id);
 const NS = "http://www.w3.org/2000/svg";
 const rgb = c => `rgb(${c[0]},${c[1]},${c[2]})`;
 let frames = [], cur = 0, sel = null, timer = null, layer = "original";
+const threshold = new URLSearchParams(location.search).get("threshold") ?? null;  // from led-detector --show --threshold
 const STAGES = { original: "original", gray: "grayscale", blurred: "blur", threshold: "threshold", eroded: "erode", dilated: "dilate", blobs: "blobs ≥ min area" };
 
 fetch("frames.json").then(r => r.json()).then(data => {
@@ -171,7 +174,7 @@ function drawStrip() {
   const ctx = c.getContext("2d");
   ctx.scale(dpr, dpr);
   ctx.fillStyle = "#22252e"; ctx.fillRect(0, 0, w, h);
-  const step = w / frames.length, t = $("threshold").value === "" ? null : +$("threshold").value;
+  const step = w / frames.length, t = threshold === null ? null : +threshold;
   let last, n = 0;  // last = color as written to --out, held until it changes by more than t
   frames.forEach((f, i) => {
     const c = f.leds.find(l => l.id === sel)?.rgb ?? null;
@@ -195,8 +198,6 @@ $("prev").onclick = () => show(cur - 1);
 $("next").onclick = () => show(cur + 1);
 $("play").onclick = () => play(!timer);
 $("markers").onchange = () => show(cur);
-$("threshold").value = new URLSearchParams(location.search).get("threshold") ?? "";
-$("threshold").oninput = () => frames.length && drawStrip();
 $("speed").onchange = () => timer && play(true);
 $("slider").oninput = e => show(+e.target.value);
 $("strip").onclick = e => show(Math.floor(e.offsetX / e.target.clientWidth * frames.length));
@@ -214,6 +215,24 @@ addEventListener("keydown", e => {
   else return;
   e.preventDefault();
 });
+// drag (or arrow-key) the sidebar's left edge to resize it; the width is remembered per page
+function sidebarGrips(key) {
+  const set = w => document.documentElement.style.setProperty("--side", `${Math.round(Math.max(200, Math.min(w, innerWidth * 0.7)))}px`);
+  const save = aside => { try { localStorage.setItem(key, aside.offsetWidth); } catch {} };
+  try { const w = +localStorage.getItem(key); if (w) set(w); } catch {}
+  document.querySelectorAll("aside").forEach(aside => {
+    const grip = Object.assign(document.createElement("div"), { className: "grip", tabIndex: 0, role: "separator", ariaLabel: "resize sidebar", ariaOrientation: "vertical" });
+    aside.before(grip);
+    grip.onpointerdown = e => { e.preventDefault(); grip.setPointerCapture(e.pointerId); document.body.classList.add("resizing"); };
+    grip.onpointermove = e => grip.hasPointerCapture(e.pointerId) && set(innerWidth - e.clientX);  // sidebars sit at the right edge
+    grip.onpointerup = grip.onpointercancel = () => { document.body.classList.remove("resizing"); save(aside); };
+    grip.onkeydown = e => {
+      const step = { ArrowLeft: 20, ArrowRight: -20 }[e.key];
+      if (step) { e.preventDefault(); set(aside.offsetWidth + step); save(aside); }
+    };
+  });
+}
+sidebarGrips("xmas-viewer-side");
 </script>
 </body>
 </html>
