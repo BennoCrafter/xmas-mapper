@@ -95,6 +95,10 @@
 
   #toast { position: fixed; bottom: 20px; left: 50%; translate: -50%; background: #3a1d1d; border: 1px solid var(--bad); color: var(--text); padding: 10px 16px; border-radius: 8px; max-width: min(560px, 90vw); box-shadow: 0 8px 30px #0008; }
 
+  /* ----- map ----- */
+  #map .main { display: grid; place-items: center; }
+  #map-view { height: calc(100vh - 100px); max-width: 100%; background: #000; border-radius: var(--radius); touch-action: none; cursor: crosshair; }
+
   @media (max-width: 760px) {
     body { height: auto; }
     section[data-view] { grid-template-columns: 1fr; }
@@ -113,9 +117,10 @@
   <nav>
     <a href="#lights">Lights</a>
     <a href="#detect">Detect</a>
+    <a href="#map">Map</a>
     <a href="#cloud" aria-disabled="true">3D map<small>soon</small></a>
   </nav>
-  <div class="pill" title="Bluetooth connection to the light"><i class="dot" id="dot"></i><span id="pill">not connected</span></div>
+  <div class="pill" title="Bluetooth connection to the light"><i class="dot" id="dot"></i><span id="pill">not connected</span><button class="btn" id="hconnect">Connect</button></div>
 </header>
 
 <!-- ===== lights ===== -->
@@ -194,6 +199,23 @@
   </aside>
 </section>
 
+<!-- ===== map ===== -->
+<section data-view="map" id="map" hidden>
+  <div class="main">
+    <div class="empty" id="map-empty"><strong>No map yet</strong>Open a run under Detect and press “Clone as map”.</div>
+    <svg id="map-view" hidden></svg>
+  </div>
+  <aside>
+    <div class="group">
+      <h2>Paint</h2>
+      <div class="row"><input type="color" id="map-color" value="#ff0000" aria-label="paint color"><span class="hint grow">drag over the tree to paint, sent to the light as you go</span></div>
+      <label class="field">Brush size<input type="range" id="brush" min="1" max="15" value="3"></label>
+      <button class="btn" id="map-clear">All off</button>
+      <p class="hint" id="map-info"></p>
+    </div>
+  </aside>
+</section>
+
 <div id="toast" role="alert" hidden></div>
 
 <script>
@@ -237,6 +259,7 @@ function setLight(s) {
   $("pill").textContent = s.connected ? "connected" : "not connected";
   $("connect").textContent = s.connected ? "Disconnect" : "Connect";
   $("connect").classList.toggle("primary", !s.connected);
+  $("hconnect").textContent = s.connected ? "Disconnect" : "Connect";
   $("brightness").value = s.brightness; $("brightness-val").textContent = s.brightness + "%";
   drawTree();
 }
@@ -308,7 +331,7 @@ setColor("ff0000");
 
 // one request at a time; buttons in the light panel are disabled while it runs
 async function act(action, body = {}) {
-  const btns = [...$("lights").querySelectorAll("aside button, aside input")];
+  const btns = [...$("lights").querySelectorAll("aside button, aside input"), $("hconnect")];
   btns.forEach(b => b.disabled = true);
   $("pill").textContent = light.connected ? "sending…" : "connecting…";
   try { setLight(await api(`/api/light/${action}`, body)); }
@@ -316,7 +339,7 @@ async function act(action, body = {}) {
   finally { btns.forEach(b => b.disabled = false); }
 }
 
-$("connect").onclick = () => act(light.connected ? "disconnect" : "connect");
+$("connect").onclick = $("hconnect").onclick = () => act(light.connected ? "disconnect" : "connect");
 document.querySelectorAll("[data-power]").forEach(b => b.onclick = () => act("power", { on: b.dataset.power === "1" }));
 $("brightness").oninput = e => $("brightness-val").textContent = e.target.value + "%";
 $("brightness").onchange = e => act("brightness", { percent: +e.target.value });
@@ -365,10 +388,12 @@ function drawJobs() {
         refreshJobs();
       } catch (err) { toast(err.message); relabel.disabled = false; }
     };
+    const clone = h("button", { className: "btn", textContent: "Clone as map", hidden: !j.decoded });
+    clone.onclick = e => { e.stopPropagation(); cloneMap(j.id).catch(err => toast(err.message)); };
     const meta = h("span", { className: "meta" + (j.state === "failed" ? " failed" : "") });
     meta.innerHTML = fmtJob(j);
     const b = h("div", { className: "job" + (j.id === current ? " sel" : ""), tabIndex: 0, role: "button" },
-      h("span", { className: "name", textContent: j.source, title: j.id }), h("span", { className: "actions" }, relabel, del), meta);
+      h("span", { className: "name", textContent: j.source, title: j.id }), h("span", { className: "actions" }, clone, relabel, del), meta);
     b.onclick = () => openJob(j.id);
     b.onkeydown = e => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), openJob(j.id));
     return b;
@@ -431,6 +456,86 @@ $("run").onclick = () => {
   xhr.send(form);
 };
 
+// ===== map: decoded LEDs at their 2D position in the video, paint them with the mouse =====
+let ledMap = null, painting = false, sending = false;
+const pending = {};  // painted but not yet sent: led -> hex
+try { ledMap = JSON.parse(localStorage.getItem("xmas-map")); } catch {}
+
+async function cloneMap(id) {
+  const frames = await api(`/jobs/${id}/frames.json`), sum = {};
+  for (const led of frames.flatMap(f => f.leds)) if (led.led != null) {
+    const s = sum[led.led] ??= [0, 0, 0];
+    s[0] += led.x; s[1] += led.y; s[2]++;
+  }
+  // average position over every frame the LED was seen in
+  const points = Object.fromEntries(Object.entries(sum).map(([i, [x, y, n]]) => [i, [x / n, y / n]]));
+  if (!Object.keys(points).length) throw new Error("no decoded LEDs in this run");
+  ledMap = { job: id, w: frames[0].w, h: frames[0].h, points };
+  try { localStorage.setItem("xmas-map", JSON.stringify(ledMap)); } catch {}
+  location.hash = "#map";
+}
+
+function drawMap() {
+  $("map-empty").hidden = !!ledMap; $("map-view").toggleAttribute("hidden", !ledMap);  // svg has no .hidden property
+  if (!ledMap) return;
+  const svg = $("map-view"), r = Math.max(ledMap.w, ledMap.h) / 150;
+  svg.setAttribute("viewBox", `0 0 ${ledMap.w} ${ledMap.h}`);
+  if (svg.children.length !== Object.keys(ledMap.points).length + 1)
+    svg.replaceChildren(...Object.entries(ledMap.points).map(([i, [x, y]]) => {
+      const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      for (const [k, v] of Object.entries({ cx: x, cy: y, r, "data-i": i })) c.setAttribute(k, v);
+      c.append(Object.assign(document.createElementNS("http://www.w3.org/2000/svg", "title"), { textContent: `LED ${i}` }));
+      return c;
+    }), ring);
+  for (const c of svg.querySelectorAll("[data-i]")) {
+    const col = pending[c.dataset.i] ?? light.leds[c.dataset.i];
+    c.setAttribute("fill", col ? "#" + col : "#2a2d36");
+    c.style.filter = col ? `drop-shadow(0 0 ${r}px #${col})` : "";
+  }
+  $("map-info").textContent = `${Object.keys(ledMap.points).length} LEDs from run ${ledMap.job}`;
+}
+
+// brush outline that follows the cursor
+const ring = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+ring.setAttribute("fill", "none"); ring.setAttribute("stroke", "#fff"); ring.setAttribute("stroke-dasharray", "4 3");
+ring.setAttribute("vector-effect", "non-scaling-stroke"); ring.style.pointerEvents = "none";
+
+function moveRing(e) {
+  const svg = $("map-view"), p = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse());
+  const reach = Math.max(ledMap.w, ledMap.h) * $("brush").value / 100;
+  for (const [k, v] of Object.entries({ cx: p.x, cy: p.y, r: reach, visibility: "visible" })) ring.setAttribute(k, v);
+  return { p, reach };
+}
+
+function paintAt(e) {
+  const { p, reach } = moveRing(e), col = $("map-color").value.slice(1);
+  for (const [i, [x, y]] of Object.entries(ledMap.points))
+    if (Math.hypot(x - p.x, y - p.y) <= reach && (pending[i] ?? light.leds[i]) !== col) pending[i] = col;
+  drawMap(); flush();
+}
+
+// one draw request in flight at a time; strokes painted meanwhile go out with the next one
+async function flush() {
+  if (sending || !Object.keys(pending).length) return;
+  const batch = { ...pending }, byColor = {};
+  for (const [i, c] of Object.entries(batch)) (byColor[c] ??= []).push(+i);
+  sending = true;
+  try { setLight(await api("/api/light/draw", { leds: Object.fromEntries(Object.entries(byColor).map(([c, ids]) => [toSpec(ids), c])) })); }
+  catch (err) { toast(err.message); }
+  for (const i in batch) if (pending[i] === batch[i]) delete pending[i];
+  sending = false; drawMap(); flush();
+}
+
+$("map-view").addEventListener("pointerdown", e => { painting = true; $("map-view").setPointerCapture(e.pointerId); paintAt(e); });
+$("map-view").addEventListener("pointermove", e => painting ? paintAt(e) : moveRing(e));
+$("map-view").addEventListener("pointerleave", () => ring.setAttribute("visibility", "hidden"));
+addEventListener("pointerup", () => painting = false);
+$("map-clear").onclick = async () => {
+  try { setLight(await api("/api/light/draw", { clear: true })); } catch (err) { toast(err.message); }
+  drawMap();
+};
+onShow.map = () => { drawMap(); api("/api/light").then(l => { setLight(l); drawMap(); }).catch(err => toast(err.message)); };
+
 // ----- dev: reload the page when the server restarts or an html file changes (python main.py ui --reload) -----
 (async function devReload(last) {
   const v = await fetch("/api/dev").then(r => r.ok ? r.json() : null, () => last);
@@ -440,6 +545,7 @@ $("run").onclick = () => {
 })();
 
 route();
+api("/api/light").then(setLight).catch(() => {});  // header state, also on pages that don't load it
 </script>
 </body>
 </html>
