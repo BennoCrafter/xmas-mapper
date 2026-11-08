@@ -1,0 +1,13 @@
+# Linux host only (e.g. Raspberry Pi): BLE goes through the host's BlueZ over dbus.
+# Dev with hot reload: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+services:
+  app:
+    build: .
+    network_mode: host  # BLE + http://<host>:8000
+    volumes:
+      - ./data:/data
+      - /var/run/dbus:/var/run/dbus
+    environment:
+      - XMAS_LIGHT_NAME=6871
+      # - XMAS_LIGHT_ADDRESS=AA:BB:CC:DD:EE:FF
+    restart: unless-stopped

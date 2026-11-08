@@ -26,3 +26,17 @@ python main.py test-rainbow             # light test
 ```
 
 Run `python main.py leds --help` for all options.
+
+## Web UI
+
+```sh
+python main.py ui              # http://localhost:8000: light control + LED detection runs
+python main.py ui --reload     # dev: server restarts and the page reloads on every edit
+```
+
+Docker (Linux host such as a Raspberry Pi only; BLE goes through the host's BlueZ):
+
+```sh
+docker compose up -d                                                  # http://<host>:8000
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up     # dev, hot reload
+```

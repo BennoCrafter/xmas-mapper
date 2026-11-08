@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>xmas-mapper</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 1 13 9H10L14 14H2L6 9H3Z' fill='%23ffb347'/></svg>">
+<style>
+  /* same tokens as led_viewer.html */
+  :root {
+    --bg: #0e0f13; --panel: #171920; --raised: #22252e; --line: #262933; --text: #e6e7eb; --muted: #8b8f9c;
+    --accent: #ffb347; --ok: #5dd39e; --bad: #ff6b6b; --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; height: 100vh; display: grid; grid-template-rows: auto 1fr;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+  button, input, select { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  header { display: flex; align-items: center; gap: 24px; padding: 0 20px; height: 52px; border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; letter-spacing: .01em; }
+  nav { display: flex; gap: 4px; height: 100%; }
+  nav a { display: flex; align-items: center; padding: 0 12px; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; }
+  nav a:hover { color: var(--text); }
+  nav a[aria-current] { color: var(--text); border-color: var(--accent); }
+  nav a[aria-disabled] { pointer-events: none; opacity: .45; }
+  nav small { margin-left: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  .pill { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.on { background: var(--ok); }
+
+  section[data-view] { display: grid; grid-template-columns: 1fr 320px; min-height: 0; }
+  .main { min-height: 0; overflow: auto; padding: 24px; }
+  aside { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; }
+  .group { padding: 16px; border-bottom: 1px solid var(--line); display: grid; gap: 10px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0; font-weight: 600; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .row > .grow { flex: 1; min-width: 0; }
+  .hint { color: var(--muted); font-size: 12px; margin: 0; }
+
+  .btn { background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; cursor: pointer; white-space: nowrap; }
+  .btn:hover:not(:disabled) { border-color: var(--muted); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #1c1300; font-weight: 600; }
+  .btn.ghost { background: none; border-color: transparent; color: var(--muted); padding: 4px 8px; }
+  .btn.ghost:hover:not(:disabled) { color: var(--bad); border-color: transparent; }
+  input[type=text], input[type=number] { background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; width: 100%; }
+  input[type=number] { width: 100%; }
+  input[type=range] { accent-color: var(--accent); }
+  label.field { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+
+  /* ----- lights ----- */
+  .tree { display: grid; grid-template-columns: repeat(25, 1fr); gap: 5px; max-width: 900px; user-select: none; touch-action: none; }
+  .led { aspect-ratio: 1; border-radius: 50%; border: 0; padding: 0; background: #1c1f27; position: relative; cursor: pointer; }
+  .led.lit { box-shadow: 0 0 10px var(--c); background: var(--c); }
+  .led.sel { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .led:hover::after { content: attr(data-i); position: absolute; bottom: 120%; left: 50%; translate: -50%; background: #000; color: #fff; font: 11px ui-monospace, monospace; padding: 2px 5px; border-radius: 4px; pointer-events: none; z-index: 1; }
+  .legend { display: flex; gap: 16px; margin: 0 0 16px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+  .legend kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font: inherit; color: var(--text); }
+  .swatches { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+  .swatches button { aspect-ratio: 1; border-radius: 6px; border: 1px solid #ffffff22; cursor: pointer; padding: 0; }
+  .swatches button[aria-pressed=true] { outline: 2px solid var(--text); outline-offset: 1px; }
+  input[type=color] { width: 40px; height: 34px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); padding: 2px; cursor: pointer; }
+  .devices { display: grid; gap: 4px; }
+  .devices button { display: flex; justify-content: space-between; text-align: left; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+  .devices span { color: var(--muted); font: 12px ui-monospace, monospace; }
+
+  /* ----- detect ----- */
+  #detect .main { padding: 0; display: grid; }
+  iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .empty { display: grid; place-content: center; gap: 6px; text-align: center; color: var(--muted); padding: 24px; }
+  .empty strong { color: var(--text); font-size: 16px; font-weight: 600; }
+  .drop { border: 1.5px dashed var(--line); border-radius: var(--radius); padding: 22px 12px; text-align: center; color: var(--muted); cursor: pointer; transition: border-color .15s, background .15s; }
+  .drop:hover, .drop.over { border-color: var(--accent); background: #2a241833; color: var(--text); }
+  .drop strong { color: var(--text); display: block; margin-bottom: 2px; }
+  .tune { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  details[open] summary { margin-bottom: 10px; }
+  .bar { height: 4px; background: var(--raised); border-radius: 2px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .1s; }
+  .jobs { display: grid; }
+  .job { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 8px; padding: 10px 16px; border: 0; border-bottom: 1px solid var(--line); background: none; text-align: left; cursor: pointer; }
+  .job:hover { background: #1f222b; }
+  .job.sel { background: #2a2418; box-shadow: inset 3px 0 var(--accent); }
+  .job .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .job .meta { grid-column: 1; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .job .meta.failed { color: var(--bad); }
+  .job .actions { grid-row: 1 / 3; grid-column: 2; display: flex; gap: 4px; }
+  .spin { display: inline-block; width: 9px; height: 9px; border: 2px solid var(--accent); border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; margin-right: 4px; }
+  @keyframes spin { to { rotate: 1turn; } }
+
+  #toast { position: fixed; bottom: 20px; left: 50%; translate: -50%; background: #3a1d1d; border: 1px solid var(--bad); color: var(--text); padding: 10px 16px; border-radius: 8px; max-width: min(560px, 90vw); box-shadow: 0 8px 30px #0008; }
+
+  @media (max-width: 760px) {
+    body { height: auto; }
+    section[data-view] { grid-template-columns: 1fr; }
+    aside { border-left: 0; border-top: 1px solid var(--line); }
+    #detect .main { min-height: 70vh; }
+    .tree { gap: 3px; }
+    header { gap: 12px; padding: 0 16px; }
+    .pill span { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1 13 9H10L14 14H2L6 9H3Z" fill="#ffb347"/></svg>xmas-mapper</div>
+  <nav>
+    <a href="#lights">Lights</a>
+    <a href="#detect">Detect</a>
+    <a href="#cloud" aria-disabled="true">3D map<small>soon</small></a>
+  </nav>
+  <div class="pill" title="Bluetooth connection to the light"><i class="dot" id="dot"></i><span id="pill">not connected</span></div>
+</header>
+
+<!-- ===== lights ===== -->
+<section data-view="lights" id="lights" hidden>
+  <div class="main">
+    <div class="legend">
+      <span><b id="sel-count">0</b> selected</span>
+      <span>click · drag to select a run · <kbd>⇧</kbd> click extends · <kbd>⌘</kbd>/<kbd>Ctrl</kbd> click toggles · <kbd>Esc</kbd> clears</span>
+    </div>
+    <div class="tree" id="tree" role="group" aria-label="LEDs in string order"></div>
+  </div>
+  <aside>
+    <div class="group">
+      <h2>Connection</h2>
+      <div class="row">
+        <button class="btn primary grow" id="connect">Connect</button>
+        <button class="btn" id="scan">Scan</button>
+      </div>
+      <div class="devices" id="devices"></div>
+      <p class="hint">Close the Govee app first, the light accepts one client.</p>
+    </div>
+    <div class="group">
+      <h2>Power &amp; brightness</h2>
+      <div class="row">
+        <button class="btn grow" data-power="1">On</button>
+        <button class="btn grow" data-power="0">Off</button>
+      </div>
+      <div class="row"><input type="range" class="grow" id="brightness" min="1" max="100" value="100" aria-label="brightness"><span id="brightness-val" style="width:38px;text-align:right">100%</span></div>
+    </div>
+    <div class="group">
+      <h2>Color</h2>
+      <div class="swatches" id="swatches"></div>
+      <div class="row"><input type="color" id="color" value="#ff0000" aria-label="custom color"><input type="text" class="grow" id="hex" value="ff0000" spellcheck="false" aria-label="hex color"></div>
+    </div>
+    <div class="group">
+      <h2>LEDs</h2>
+      <input type="text" id="spec" placeholder="e.g. 0-9,100" spellcheck="false" aria-label="LED selection">
+      <div class="row">
+        <button class="btn primary grow" id="paint">Light selected</button>
+        <button class="btn" id="unpaint">Turn off</button>
+      </div>
+      <div class="row">
+        <button class="btn grow" id="fill">Fill all</button>
+        <button class="btn grow" id="clear">All off</button>
+      </div>
+    </div>
+  </aside>
+</section>
+
+<!-- ===== detect ===== -->
+<section data-view="detect" id="detect" hidden>
+  <div class="main" id="viewer-wrap">
+    <div class="empty" id="viewer-empty"><strong>No run selected</strong>Upload a video of the tree to detect its LEDs.</div>
+  </div>
+  <aside>
+    <div class="group">
+      <h2>New run</h2>
+      <label class="drop" id="drop" tabindex="0">
+        <strong>Drop a video or images</strong><span id="drop-label">or click to browse</span>
+        <input type="file" id="files" multiple accept="video/*,.png,.jpg,.jpeg" hidden>
+      </label>
+      <details>
+        <summary>Tuning</summary>
+        <div class="tune">
+          <label class="field">Sample fps<input type="number" name="fps" value="10" min="0.1" step="any"></label>
+          <label class="field">Min blob area<input type="number" name="min_area" value="50" min="0"></label>
+          <label class="field">Max move px<input type="number" name="max_distance" value="30" min="1" step="any"></label>
+          <label class="field">Min hits<input type="number" name="min_hits" value="3" min="1"></label>
+        </div>
+      </details>
+      <div class="bar" id="upload-bar" hidden><i></i></div>
+      <button class="btn primary" id="run" disabled>Detect LEDs</button>
+    </div>
+    <div class="group" style="border:0;padding-bottom:6px"><h2>Runs</h2></div>
+    <div class="jobs" id="jobs"></div>
+  </aside>
+</section>
+
+<div id="toast" role="alert" hidden></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const h = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+
+let toastTimer;
+function toast(msg) {
+  $("toast").textContent = msg; $("toast").hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => $("toast").hidden = true, 6000);
+}
+
+async function api(path, body, method) {
+  const opts = body === undefined ? { method: method || "GET" }
+    : { method: method || "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || r.statusText);
+  return data;
+}
+
+// ----- router: one <section data-view> per page; onShow[view] runs when it opens -----
+const onShow = {};
+function route() {
+  const view = document.querySelector(`section[data-view="${location.hash.slice(1)}"]`) ? location.hash.slice(1) : "lights";
+  document.querySelectorAll("section[data-view]").forEach(s => s.hidden = s.dataset.view !== view);
+  document.querySelectorAll("nav a").forEach(a => a.toggleAttribute("aria-current", a.hash === "#" + view));
+  onShow[view]?.();
+}
+addEventListener("hashchange", route);
+
+// ===== lights =====
+let light = { connected: false, total: 375, leds: {}, brightness: 100 };
+const sel = new Set();
+let anchor = null, dragging = false, dragBase = null;
+const PRESETS = ["ff0000", "ff8000", "ffd000", "00ff00", "00ffd0", "0060ff", "a020ff", "ffffff"];
+
+function setLight(s) {
+  light = s;
+  $("dot").classList.toggle("on", s.connected);
+  $("pill").textContent = s.connected ? "connected" : "not connected";
+  $("connect").textContent = s.connected ? "Disconnect" : "Connect";
+  $("connect").classList.toggle("primary", !s.connected);
+  $("brightness").value = s.brightness; $("brightness-val").textContent = s.brightness + "%";
+  drawTree();
+}
+
+function drawTree() {
+  const tree = $("tree");
+  if (tree.children.length !== light.total)
+    tree.replaceChildren(...Array.from({ length: light.total }, (_, i) => h("button", { className: "led", ariaLabel: `LED ${i}` })));
+  [...tree.children].forEach((b, i) => {
+    const c = light.leds[i];
+    b.dataset.i = i;
+    b.classList.toggle("lit", !!c);
+    b.style.setProperty("--c", c ? "#" + c : "");
+    b.classList.toggle("sel", sel.has(i));
+    b.ariaPressed = sel.has(i);
+  });
+  $("sel-count").textContent = sel.size;
+}
+
+// [1,2,3,7] -> "1-3,7" and back
+function toSpec(ids) {
+  const s = [...ids].sort((a, b) => a - b), out = [];
+  for (let i = 0; i < s.length; i++) {
+    let j = i; while (s[j + 1] === s[j] + 1) j++;
+    out.push(j > i ? `${s[i]}-${s[j]}` : `${s[i]}`); i = j;
+  }
+  return out.join(",");
+}
+function fromSpec(spec) {
+  const out = new Set();
+  for (const part of spec.split(",").map(p => p.trim()).filter(Boolean)) {
+    const [a, b = a] = part.split("-").map(Number);
+    for (let i = a; i <= b && i < light.total; i++) if (i >= 0) out.add(i);
+  }
+  return out;
+}
+function setSel(ids) { sel.clear(); ids.forEach(i => sel.add(i)); $("spec").value = toSpec(sel); drawTree(); }
+const range = (a, b) => Array.from({ length: Math.abs(b - a) + 1 }, (_, k) => Math.min(a, b) + k);
+
+$("tree").addEventListener("pointerdown", e => {
+  const i = +e.target.dataset.i; if (isNaN(i)) return;
+  if (e.shiftKey && anchor !== null) setSel([...sel, ...range(anchor, i)]);
+  else if (e.metaKey || e.ctrlKey) { sel.has(i) ? sel.delete(i) : sel.add(i); anchor = i; setSel([...sel]); }
+  else { anchor = i; dragging = true; dragBase = []; setSel([i]); }
+  e.target.releasePointerCapture?.(e.pointerId);
+});
+$("tree").addEventListener("pointerover", e => {
+  const i = +e.target.dataset.i;
+  if (dragging && !isNaN(i)) setSel([...dragBase, ...range(anchor, i)]);
+});
+addEventListener("pointerup", () => dragging = false);
+$("tree").addEventListener("keydown", e => {  // keyboard: space/enter toggles the focused LED
+  const i = +e.target.dataset.i;
+  if (!isNaN(i) && (e.key === " " || e.key === "Enter")) { e.preventDefault(); sel.has(i) ? sel.delete(i) : sel.add(i); setSel([...sel]); }
+});
+addEventListener("keydown", e => { if (e.key === "Escape" && !$("lights").hidden) setSel([]); });
+$("spec").addEventListener("input", () => { const s = fromSpec($("spec").value); sel.clear(); s.forEach(i => sel.add(i)); drawTree(); });
+
+function color() { return $("hex").value.replace("#", "").toLowerCase(); }
+function setColor(c) {
+  $("hex").value = c; if (/^[0-9a-f]{6}$/.test(c)) $("color").value = "#" + c;
+  [...$("swatches").children].forEach(b => b.ariaPressed = b.dataset.c === c);
+}
+$("swatches").replaceChildren(...PRESETS.map(c => h("button", { ariaLabel: "#" + c, title: "#" + c, onclick: () => setColor(c) })));
+[...$("swatches").children].forEach((b, i) => { b.dataset.c = PRESETS[i]; b.style.background = "#" + PRESETS[i]; });
+$("color").oninput = e => setColor(e.target.value.slice(1));
+$("hex").oninput = () => setColor(color());
+setColor("ff0000");
+
+// one request at a time; buttons in the light panel are disabled while it runs
+async function act(action, body = {}) {
+  const btns = [...$("lights").querySelectorAll("aside button, aside input")];
+  btns.forEach(b => b.disabled = true);
+  $("pill").textContent = light.connected ? "sending…" : "connecting…";
+  try { setLight(await api(`/api/light/${action}`, body)); }
+  catch (err) { toast(err.message); setLight(light); }
+  finally { btns.forEach(b => b.disabled = false); }
+}
+
+$("connect").onclick = () => act(light.connected ? "disconnect" : "connect");
+document.querySelectorAll("[data-power]").forEach(b => b.onclick = () => act("power", { on: b.dataset.power === "1" }));
+$("brightness").oninput = e => $("brightness-val").textContent = e.target.value + "%";
+$("brightness").onchange = e => act("brightness", { percent: +e.target.value });
+$("paint").onclick = () => sel.size ? act("draw", { leds: { [toSpec(sel)]: color() } }) : toast("Select some LEDs first.");
+$("unpaint").onclick = () => sel.size ? act("draw", { off: [toSpec(sel)] }) : toast("Select some LEDs first.");
+$("fill").onclick = () => act("fill", { color: color() });
+$("clear").onclick = () => act("draw", { clear: true });
+$("scan").onclick = async () => {
+  $("scan").disabled = true; $("scan").textContent = "Scanning…";
+  try {
+    const found = await api("/api/light/scan", {});
+    $("devices").replaceChildren(...(found.length ? found.map(d =>
+      h("button", { title: "Copy address", onclick: () => navigator.clipboard?.writeText(d.address) },
+        d.name, h("span", { textContent: `${d.rssi} dBm` }))) : [h("p", { className: "hint", textContent: "Nothing found." })]));
+  } catch (err) { toast(err.message); }
+  finally { $("scan").disabled = false; $("scan").textContent = "Scan"; }
+};
+onShow.lights = () => api("/api/light").then(setLight).catch(err => toast(err.message));
+
+// ===== detect =====
+let jobs = [], current = null, pollTimer = null;
+
+function fmtJob(j) {
+  if (j.state === "running") return `<span class="spin"></span>${j.frames} frames · ${j.leds} LEDs`;
+  if (j.state === "failed") return j.error || "failed";
+  return `${j.frames} frames · ${j.leds} LEDs${j.decoded != null ? ` · ${j.decoded} decoded` : ""} · fps ${j.opts.fps}`;
+}
+
+function drawJobs() {
+  $("jobs").replaceChildren(...(jobs.length ? jobs.map(j => {
+    const del = h("button", { className: "btn ghost", textContent: "✕", ariaLabel: "delete run", title: "Delete", disabled: j.state === "running" });
+    del.onclick = async e => {
+      e.stopPropagation();
+      if (!confirm(`Delete run ${j.id}?`)) return;
+      try { await api(`/api/jobs/${j.id}`, undefined, "DELETE"); if (current === j.id) openJob(null); refreshJobs(); }
+      catch (err) { toast(err.message); }
+    };
+    const relabel = h("button", { className: "btn ghost", textContent: "↻", ariaLabel: "redo LED labelling", title: "Redo LED labelling", disabled: j.state !== "done" });
+    relabel.onclick = async e => {
+      e.stopPropagation();
+      relabel.disabled = true;
+      try {
+        const info = await api(`/api/jobs/${j.id}/label`, {});
+        toast(`${info.decoded} LEDs decoded`);
+        if (current === j.id) openJob(j.id);  // reload the viewer with the new labels
+        refreshJobs();
+      } catch (err) { toast(err.message); relabel.disabled = false; }
+    };
+    const meta = h("span", { className: "meta" + (j.state === "failed" ? " failed" : "") });
+    meta.innerHTML = fmtJob(j);
+    const b = h("div", { className: "job" + (j.id === current ? " sel" : ""), tabIndex: 0, role: "button" },
+      h("span", { className: "name", textContent: j.source, title: j.id }), h("span", { className: "actions" }, relabel, del), meta);
+    b.onclick = () => openJob(j.id);
+    b.onkeydown = e => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), openJob(j.id));
+    return b;
+  }) : [h("p", { className: "hint", style: "padding:0 16px", textContent: "No runs yet." })]));
+}
+
+function openJob(id) {
+  current = id;
+  const j = jobs.find(j => j.id === id);
+  if (j?.state === "done") $("viewer-wrap").replaceChildren(h("iframe", { src: `/jobs/${id}/`, title: "LED viewer" }));
+  else {
+    const msg = !j ? ["No run selected", "Upload a video of the tree to detect its LEDs."]
+      : j.state === "running" ? ["Detecting…", `${j.frames} frames so far, the viewer opens when it's done.`]
+      : ["Run failed", j.error || ""];
+    $("viewer-wrap").replaceChildren(h("div", { className: "empty" }, h("strong", { textContent: msg[0] }), msg[1]));
+  }
+  drawJobs();
+}
+
+async function refreshJobs() {
+  clearTimeout(pollTimer);
+  try {
+    const before = jobs.find(j => j.id === current)?.state;
+    jobs = await api("/api/jobs");
+    const now = jobs.find(j => j.id === current);
+    if (now && (before !== now.state || now.state === "running")) openJob(current); else drawJobs();
+  } catch (err) { toast(err.message); }
+  if (jobs.some(j => j.state === "running")) pollTimer = setTimeout(refreshJobs, 1000);
+}
+onShow.detect = refreshJobs;
+
+let picked = [];
+function pick(files) {
+  picked = [...files];
+  $("drop-label").textContent = picked.length === 1 ? picked[0].name : picked.length ? `${picked.length} files` : "or click to browse";
+  $("run").disabled = !picked.length;
+}
+$("files").onchange = e => pick(e.target.files);
+$("drop").onkeydown = e => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), $("files").click());
+["dragenter", "dragover"].forEach(t => $("drop").addEventListener(t, e => { e.preventDefault(); $("drop").classList.add("over"); }));
+["dragleave", "drop"].forEach(t => $("drop").addEventListener(t, () => $("drop").classList.remove("over")));
+$("drop").addEventListener("drop", e => { e.preventDefault(); pick(e.dataTransfer.files); });
+
+$("run").onclick = () => {
+  const form = new FormData();
+  picked.forEach(f => form.append("files", f));
+  document.querySelectorAll(".tune input").forEach(i => form.append(i.name, i.value));
+  const xhr = new XMLHttpRequest(), bar = $("upload-bar");  // xhr for upload progress
+  xhr.open("POST", "/api/jobs");
+  xhr.upload.onprogress = e => bar.firstChild.style.width = `${100 * e.loaded / e.total}%`;
+  xhr.onloadend = () => {
+    bar.hidden = true; $("run").textContent = "Detect LEDs";
+    let data = {}; try { data = JSON.parse(xhr.responseText); } catch {}
+    if (xhr.status !== 201) { $("run").disabled = false; return toast(data.error || "upload failed"); }
+    pick([]); $("files").value = "";
+    jobs.unshift(data); openJob(data.id); refreshJobs();
+  };
+  bar.hidden = false; bar.firstChild.style.width = "0";
+  $("run").disabled = true; $("run").textContent = "Uploading…";
+  xhr.send(form);
+};
+
+// ----- dev: reload the page when the server restarts or an html file changes (python main.py ui --reload) -----
+(async function devReload(last) {
+  const v = await fetch("/api/dev").then(r => r.ok ? r.json() : null, () => last);
+  if (v === null) return;  // not in dev mode
+  if (last && v !== last) return location.reload();
+  setTimeout(() => devReload(v ?? last), 1000);
+})();
+
+route();
+</script>
+</body>
+</html>

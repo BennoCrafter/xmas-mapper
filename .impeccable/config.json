@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "dark-glow",
+        "value": "*",
+        "files": [
+          "src/web.html"
+        ],
+        "createdAt": "2026-11-08T00:01:21.672Z",
+        "reason": "model: .led.lit glow simulates a physically lit LED in the tree grid (domain-appropriate); decorative status-dot glow removed"
+      }
+    ]
+  }
+}

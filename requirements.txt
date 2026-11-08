@@ -3,3 +3,6 @@ bleak
 cryptography
 imutils
 prompt_toolkit
+starlette
+uvicorn
+python-multipart

@@ -34,6 +34,7 @@
   .led.sel { background: #2a2418; box-shadow: inset 3px 0 var(--accent); }
   .swatch { width: 22px; height: 22px; border-radius: 6px; border: 1px solid #ffffff22; flex: none; }
   .led .id { font-weight: 600; width: 40px; }
+  .led .decoded { color: var(--accent); font-weight: 600; }
   .led .rgb { color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; }
   .empty { color: var(--muted); padding: 0 16px; }
 
@@ -131,7 +132,7 @@ function show(i) {
     el("circle", { cx: led.x, cy: led.y, r, fill: "none", stroke: on ? "#ffb347" : "#fff", "stroke-width": r / 3 }, g);
     el("circle", { cx: led.x, cy: led.y, r: r / 2, fill: rgb(led.rgb) }, g);
     const t = el("text", { x: led.x + r * 1.6, y: led.y + r / 2, "font-size": size / 60, fill: on ? "#ffb347" : "#fff", "stroke-width": size / 300 }, g);
-    t.textContent = `#${led.id}`;
+    t.textContent = led.led != null ? `LED ${led.led}` : `#${led.id}`;
     g.onclick = () => select(led.id);
   }
   if (frames[cur + 1]) new Image().src = frames[cur + 1].files[layer];  // preload for smooth playback
@@ -142,7 +143,7 @@ function show(i) {
   $("list").replaceChildren(...(leds.length ? leds.map(led => {
     const b = document.createElement("button");
     b.className = "led" + (led.id === sel ? " sel" : "");
-    b.innerHTML = `<span class="swatch" style="background:${rgb(led.rgb)}"></span><span class="id">#${led.id}</span><span class="rgb">${led.rgb.join(" ")}</span>`;
+    b.innerHTML = `<span class="swatch" style="background:${rgb(led.rgb)}"></span><span class="id">#${led.id}</span>${led.led != null ? `<span class="decoded">LED ${led.led}</span>` : ""}<span class="rgb">${led.rgb.join(" ")}</span>`;
     b.onclick = () => select(led.id);
     return b;
   }) : [Object.assign(document.createElement("p"), { className: "empty", textContent: "no LEDs detected" })]));

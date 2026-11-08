@@ -28,6 +28,11 @@ async def main(ids: list[int], duration: float = 1, repeats: int = 1):
                     await strip.show(wait=True)
                     await asyncio.sleep(duration)
 
+                # white flash: B of this pair can equal A of the next; white is never a symbol, so it splits them
+                strip.set(list(encoded), "#FFFFFF")
+                await strip.show(wait=True)
+                await asyncio.sleep(duration)
+
 
 def set_color(strip: GoveeStrip, n: int, color: RGB):
     r, g, b = (int(c * 255) for c in color)

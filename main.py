@@ -8,6 +8,7 @@ ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT / "src"))  # light tests import govee_strip
 
 TOOLS = {
+    "ui": ("src/web.py", "web UI for the light and the LED detector (--reload for dev)"),
     "leds": ("src/govee_strip.py", "control the Govee H6871 (--help for options)"),
     "decode": ("scripts/pklg_decode.py", "decode a PacketLogger .pklg capture"),
     "led-ids": ("src/led_id_codec.py", "demo of LED id color encoding"),

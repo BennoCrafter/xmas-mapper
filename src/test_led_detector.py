@@ -4,7 +4,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from led_detector import Tracker, changed, detect_leds, frames
+from led_detector import Tracker, changed, classify, detect_leds, frames
+from led_id_codec import LedIdCodec
 
 RGB = (255, 0, 0)
 
@@ -42,9 +43,24 @@ def test_video():
     assert all(len(s) == 1 for s in seen[8:11])
 
 
+def test_classify():
+    """LED 30: pair 0 slot B and pair 1 slot A are both cyan, only the white flash separates them."""
+    codec = LedIdCodec(n_leds=375)
+    cam = lambda c: tuple(250 if v else 40 for v in c)  # camera-ish 0/1 -> 0-255
+    colors = []
+    for a, b in codec.encode(30):
+        colors += [cam(a)] * 5 + [(150, 150, 30)] + [cam(b)] * 5 + [(250, 250, 250)] * 5  # with one blended frame
+    assert codec.encode(30)[0][1] == codec.encode(30)[1][0]
+    assert classify(colors, codec) == 30
+    assert classify(colors[8:], codec) is None  # first pair cut off -> no complete id
+    blurred = [(250, 235, 40)] * 5 + colors[5:6] + [(40, 240, 250)] * 5 + colors[11:]  # pair 0: green unclear
+    assert classify(blurred, codec) == 30  # red/cyan or yellow/blue, only one passes the check digit
+
+
 if __name__ == "__main__":
     test_tracker()
     test_video()
+    test_classify()
     print("ok")
 
 

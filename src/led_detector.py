@@ -1,4 +1,5 @@
 import argparse
+import itertools
 import json
 import shutil
 import tempfile
@@ -9,6 +10,9 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+
+from govee_strip import TOTAL_LEDS
+from led_id_codec import LedIdCodec
 
 EXTS = {".png", ".jpg", ".jpeg"}
 
@@ -129,6 +133,65 @@ def changed(rgb, last, threshold: int | None) -> bool:
     return max(abs(a - b) for a, b in zip(rgb, last)) > threshold
 
 
+def saturation(rgb) -> float:
+    return (max(rgb) - min(rgb)) / max(max(rgb), 1)
+
+
+def classify(colors: list, codec: LedIdCodec, min_frames: int = 2) -> int | None:
+    """Decodes an LED id from one LED's per-frame colors, sent as A, B, white, A, B, white, ..."""
+    sats = [saturation(rgb) for rgb in colors]
+    cut = np.percentile(sats, 30)  # white is 1 slot in 3; per LED, as camera and LED wash colors out differently
+    groups: list[list] = [[]]  # frames between white flashes: slot A, then slot B
+    white = 0  # consecutive white frames; a single one is a blended frame, not a flash
+    for rgb, sat in zip(colors, sats):
+        white = white + 1 if sat <= cut else 0
+        if white == min_frames:
+            groups[-1] = groups[-1][: 1 - min_frames]  # the white frames before this one aren't slot colors
+            groups.append([])
+        elif not white:
+            groups[-1].append(rgb)
+    full = np.median([len(g) for g in groups if len(g) >= 2 * min_frames] or [0])
+    pairs = [  # A and B last equally long, so split in time; median skips the transition frames
+        (tuple(np.median(g[: len(g) // 2], axis=0)), tuple(np.median(g[len(g) // 2 :], axis=0))) if len(g) >= max(2 * min_frames, 0.75 * full) else None
+        for g in groups
+    ]
+    n = codec.n_digits + 1
+    # shortcut: with repeats a rotated window can pass the check digit, so record from before the first pass; add a start marker if repeats are needed
+    for i in range(len(pairs) - n + 1):  # first complete id in the recording
+        window = pairs[i : i + n]
+        if all(window) and (led_id := soft_decode(window, codec)) is not None:
+            return led_id
+    return None
+
+
+def soft_decode(pairs: list, codec: LedIdCodec, unclear: float = 0.3) -> int | None:
+    """Channels where A and B differ by less than unclear x the typical difference (camera sees blue as cyan)
+    are tried both ways; only a unique id counts."""
+    margin = unclear * np.median([abs(x - y) for a, b in pairs for x, y in zip(a, b)])
+    options = []
+    for a, b in pairs:
+        channels = [(int(x > y),) if abs(x - y) >= margin else (0, 1) for x, y in zip(a, b)]
+        options.append([(bits, tuple(1 - v for v in bits)) for bits in itertools.product(*channels)])
+    if np.prod([len(o) for o in options]) > 64:  # too blurry to trust the check digit
+        return None
+    ids = {codec.decode(list(combo)) for combo in itertools.product(*options)} - {None}
+    return ids.pop() if len(ids) == 1 else None
+
+
+def decode_ids(seen: list[dict[int, Led]], shown: list[dict] | None = None) -> dict[int, int]:
+    """Tracked id -> decoded LED id, from every frame's tracks; labels the viewer frames in shown with it."""
+    streams: dict[int, list] = {}
+    for leds in seen:
+        for i, (_, _, rgb) in leds.items():
+            streams.setdefault(i, []).append(rgb)
+    codec = LedIdCodec(n_leds=TOTAL_LEDS)
+    ids = {i: led for i, colors in streams.items() if (led := classify(colors, codec)) is not None}
+    for f in shown or []:
+        for led in f["leds"]:
+            led["led"] = ids.get(led["id"])
+    return ids
+
+
 def frames(source: str, fps: float = 5):
     """Yields (name, image) from a folder of images or a video file sampled at fps; image is None if unreadable."""
     path = Path(source)
@@ -151,6 +214,31 @@ def frames(source: str, fps: float = 5):
     cap.release()
 
 
+def track(source: str, min_area: int = 50, max_distance: float = 30, min_hits: int = 3, fps: float = 10, keep_stages: bool = False):
+    """Yields (name, image, stages, detections, leds) per readable frame; stages is None unless keep_stages."""
+    tracker = Tracker(max_distance=max_distance, min_hits=min_hits)
+    for name, image in frames(source, fps):
+        if image is None:
+            print(f"{name}: could not load, skipped")
+            continue
+        stages = {"original": image} if keep_stages else None
+        detections = detect_leds(image, min_area, stages)
+        yield name, image, stages, detections, tracker.update(detections)
+
+
+def viewer_frame(name: str, image, files: dict, detections: list[Led], leds: dict[int, Led]) -> dict:
+    """One entry of frames.json for led_viewer.html."""
+    h, w = image.shape[:2]
+    return dict(
+        name=name,
+        files=files,
+        w=w,
+        h=h,
+        leds=[dict(id=i, x=x, y=y, rgb=rgb) for i, (x, y, rgb) in leds.items()],
+        raw=[[x, y] for x, y, _ in detections],  # every blob, tracked or not
+    )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("folder", help="folder with LED images, or a video file")
@@ -164,21 +252,18 @@ def main() -> None:
     ap.add_argument(
         "--threshold", type=int, help="only write a color when a channel changes by more than this (default: every frame)"
     )
+    ap.add_argument("--map", default="led_map.json", help="json of decoded LED id -> [x, y]")
     args = ap.parse_args()
 
-    tracker = Tracker(max_distance=args.max_distance, min_hits=args.min_hits)
     shown: list[dict] = []
+    seen: list[dict[int, Led]] = []  # tracked LEDs per frame, for decoding ids
+    last_pos: dict[int, tuple[int, int]] = {}
     last = None  # last color written to --out
     with tempfile.TemporaryDirectory() as tmp:
         with open(args.out, "w", buffering=1) as out:  # line-buffered: rows survive a hard quit
-            for name, image in frames(args.folder, args.fps):
-                if image is None:
-                    print(f"{name}: could not load, skipped")
-                    continue
-
-                stages = {"original": image} if args.show else None
-                detections = detect_leds(image, args.min_area, stages)
-                leds = tracker.update(detections)
+            for name, image, stages, detections, leds in track(
+                args.folder, args.min_area, args.max_distance, args.min_hits, args.fps, args.show
+            ):
                 # print(f"{name}: {len(leds)} LEDs")
                 # for i, (cx, cy, rgb) in leds.items():
                 # print(f"  #{i} at ({cx}, {cy})  rgb={rgb}")
@@ -187,21 +272,18 @@ def main() -> None:
                 if changed(rgb, last, args.threshold):
                     out.write("\t".join(map(str, rgb)) + "\n" if rgb != "none" else f"{name}\tnone\n")
                     last = rgb
+                seen.append(leds)
+                last_pos |= {i: (x, y) for i, (x, y, _) in leds.items()}
 
                 if args.show:
-                    h, w = image.shape[:2]
-                    files = save_frame(Path(tmp), len(shown), stages)
-                    shown.append(
-                        dict(
-                            name=name,
-                            files=files,
-                            w=w,
-                            h=h,
-                            leds=[dict(id=i, x=x, y=y, rgb=rgb) for i, (x, y, rgb) in leds.items()],
-                            raw=[[x, y] for x, y, _ in detections],  # every blob, tracked or not
-                        )
-                    )
+                    shown.append(viewer_frame(name, image, save_frame(Path(tmp), len(shown), stages), detections, leds))
         print(f"Wrote {args.out}")
+
+        ids = decode_ids(seen, shown)
+        for i, led_id in ids.items():
+            print(f"  #{i} -> LED {led_id} at {last_pos[i]}")
+        Path(args.map).write_text(json.dumps({led_id: last_pos[i] for i, led_id in sorted(ids.items(), key=lambda kv: kv[1])}))
+        print(f"Decoded {len(ids)}/{len(last_pos)} tracked LEDs, wrote {args.map}")
         if args.show:
             serve(Path(tmp), shown, args.threshold)
 
